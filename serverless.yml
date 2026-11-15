@@ -143,12 +143,24 @@ resources:
             Properties:
                 GroupDescription: Lambda functions (NFS client of the S3 file system)
                 VpcId: !Ref Vpc
+                # Placeholder rule matching no traffic: it replaces the default
+                # allow-all egress. The real rule is LambdaNfsEgress below, kept
+                # separate to avoid a circular reference between the two groups.
                 SecurityGroupEgress:
-                    -   IpProtocol: tcp
-                        FromPort: 2049
-                        ToPort: 2049
-                        CidrIp: 10.0.0.0/16
-                        Description: NFS to S3 Files mount targets
+                    -   IpProtocol: icmp
+                        FromPort: 252
+                        ToPort: 86
+                        CidrIp: 255.255.255.255/32
+                        Description: Disallow all traffic
+        LambdaNfsEgress:
+            Type: AWS::EC2::SecurityGroupEgress
+            Properties:
+                GroupId: !Ref LambdaSecurityGroup
+                IpProtocol: tcp
+                FromPort: 2049
+                ToPort: 2049
+                DestinationSecurityGroupId: !Ref MountTargetSecurityGroup
+                Description: NFS to S3 Files mount targets
         MountTargetSecurityGroup:
             Type: AWS::EC2::SecurityGroup
             Properties:
@@ -292,7 +304,7 @@ resources:
     # support, so the generated function resources are extended directly.
     extensions:
         WebLambdaFunction:
-            DependsOn: [DatabaseMountTargetA, DatabaseMountTargetC]
+            DependsOn: [DatabaseMountTargetA, DatabaseMountTargetC, LambdaNfsEgress]
             Properties:
                 FileSystemConfigs:
                     -   Arn: !GetAtt DatabaseAccessPoint.AccessPointArn
@@ -302,7 +314,7 @@ resources:
                         S3FilesConfig:
                             DirectS3Read: DISABLED
         ArtisanLambdaFunction:
-            DependsOn: [DatabaseMountTargetA, DatabaseMountTargetC]
+            DependsOn: [DatabaseMountTargetA, DatabaseMountTargetC, LambdaNfsEgress]
             Properties:
                 FileSystemConfigs:
                     -   Arn: !GetAtt DatabaseAccessPoint.AccessPointArn

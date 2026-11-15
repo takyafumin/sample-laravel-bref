@@ -31,7 +31,7 @@ CloudFormation の論理 ID は、serverless.yml の `resources` に書いたも
 | 実行 | `ArtisanLambdaFunction` | Lambda | `artisan`、`php-85-console`、arm64、タイムアウト 720 秒、`reservedConcurrency: 1` |
 | ネットワーク | `Vpc` | VPC | 10.0.0.0/16 |
 | ネットワーク | `PrivateSubnetA` / `PrivateSubnetC` | サブネット | 10.0.1.0/24 / 10.0.2.0/24。リージョン内の1つ目と2つ目の AZ に置く |
-| ネットワーク | `LambdaSecurityGroup` | セキュリティグループ | 受信なし。送信は TCP 2049 を VPC 内（10.0.0.0/16）に向けたものだけ |
+| ネットワーク | `LambdaSecurityGroup` / `LambdaNfsEgress` | セキュリティグループ / 送信ルール | 受信なし。送信は TCP 2049 を `MountTargetSecurityGroup` に向けたものだけ。既定の「全通信を許可」の送信ルールは、どこにも届かないダミーのルールで置き換えている |
 | ネットワーク | `MountTargetSecurityGroup` | セキュリティグループ | 受信は TCP 2049 を `LambdaSecurityGroup` から受けるものだけ |
 | データ | `DatabaseBucket` | S3 バケット | バージョニング有効、SSE-S3、パブリックアクセスをすべてブロック、古いバージョンは1日で削除、スタック削除時は残す（`Retain`） |
 | データ | `DatabaseFileSystem` | S3 Files ファイルシステム | `DatabaseBucket` 全体と同期する |
@@ -45,7 +45,8 @@ CloudFormation の論理 ID は、serverless.yml の `resources` に書いたも
 
 - **インターネットに出ない:** Lambda はプライベートサブネットだけに置き、NAT ゲートウェイもインターネットゲートウェイも VPC エンドポイントも置かない。アプリは外部 API を呼ばないので、外部への経路は要らない。
 - **VPC 外で処理されるもの:** CloudWatch Logs へのログ出力と、API Gateway からの呼び出しは Lambda サービス側で扱われるので、VPC の経路がなくても動く。
-- **許可している通信は NFS だけ:** Lambda から外に出られるのは、マウントターゲットへの NFS（TCP 2049）だけ。
+- **許可している通信は NFS だけ:** Lambda から外に出られるのは、マウントターゲットのセキュリティグループへの NFS（TCP 2049）だけ。VPC にほかのリソースを追加しても、Lambda からは届かない。
+- **送信ルールを別リソースにしている:** 2つのセキュリティグループはお互いを参照するので、Lambda 側の送信ルールを `AWS::EC2::SecurityGroupEgress`（`LambdaNfsEgress`）に分けて、CloudFormation の循環参照を避けている。
 - **マウントターゲットは AZ ごと:** 両方のサブネットに置いている。Lambda は、自分の ENI と同じ AZ のマウントターゲットに接続する。
 
 ## 4. IAM
