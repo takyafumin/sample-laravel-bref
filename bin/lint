@@ -14,6 +14,7 @@ PRETTIER_VERSION=3.6.2
 SHELLCHECK_IMAGE=koalaman/shellcheck:v0.11.0
 HADOLINT_IMAGE=hadolint/hadolint:v2.14.0
 ACTIONLINT_IMAGE=rhysd/actionlint:1.7.8
+GITLEAKS_IMAGE=zricethezav/gitleaks:v8.30.1
 JS_FILES="docker/gateway/server.mjs"
 SHELL_FILES="bin/lint bin/local-artisan"
 
@@ -24,6 +25,11 @@ run() {
   if ! "$@"; then
     status=1
   fi
+}
+
+# shellcheck disable=SC2329 # invoked indirectly through run()
+gitleaks() {
+  docker run --rm -v "$PWD:/repo:ro" -w /repo "$GITLEAKS_IMAGE" git --redact --no-banner "$@" .
 }
 
 # shellcheck disable=SC2329 # invoked indirectly through run()
@@ -39,6 +45,11 @@ if $fix; then
     npx --yes "prettier@$PRETTIER_VERSION" --write $JS_FILES
 fi
 
+# Secrets: committed history, then uncommitted (unstaged and staged) changes.
+# Untracked files are covered once they are staged. vendor/ is not scanned.
+run "gitleaks (secrets in git history)" gitleaks
+run "gitleaks (secrets in unstaged changes)" gitleaks --pre-commit
+run "gitleaks (secrets in staged changes)" gitleaks --pre-commit --staged
 run "Pint (PHP format)" vendor/bin/pint --test
 run "Larastan (PHP static analysis)" vendor/bin/phpstan analyse --no-progress --memory-limit=1G
 # shellcheck disable=SC2086

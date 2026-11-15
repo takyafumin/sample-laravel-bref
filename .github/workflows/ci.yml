@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # gitleaks scans the full history
 
       - uses: shivammathur/setup-php@v2
         with:
@@ -28,7 +30,7 @@ jobs:
           cp .env.example .env
           php artisan key:generate
 
-      - name: Lint (Pint, Larastan, Prettier, ShellCheck, Hadolint, compose)
+      - name: Lint (gitleaks, Pint, Larastan, Prettier, ShellCheck, Hadolint, compose, actionlint)
         run: bin/lint
 
       - name: Test

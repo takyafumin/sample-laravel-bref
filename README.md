@@ -67,6 +67,7 @@ http://localhost:8000/ を開く。
 
 | 対象 | ツール |
 |---|---|
+| クレデンシャル混入 | gitleaks（コミット履歴、未コミットの変更、ステージ済みの変更） |
 | PHP | Pint（フォーマット）、Larastan / PHPStan level max（静的解析） |
 | JavaScript | Prettier |
 | シェルスクリプト | ShellCheck |
