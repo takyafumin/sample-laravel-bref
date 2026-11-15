@@ -79,4 +79,4 @@ E2E-02 が通ると、次がまとめて動いていることになる。
 | `lint-and-test` | `ubuntu-latest` | `bin/lint`（gitleaks、Pint、Larastan、Prettier、ShellCheck、Hadolint、compose、actionlint）と Feature テスト |
 | `e2e` | `ubuntu-24.04-arm` | ローカルのスタック（`bref/arm-php-85` は arm64）を起動して E2E テスト。失敗時はコンテナのログとトレースを残す |
 
-デプロイした AWS 環境に向けた E2E テストは CI では実行しない（AWS の認証情報を CI に置かないため）。デプロイ後に手元で `bin/e2e <URL>` を実行する。
+デプロイした AWS 環境に向けた E2E テストは、今は CI では実行しない。デプロイ後に手元で `bin/e2e <URL>` を実行する。GitHub Actions からのデプロイと、そのあとの E2E は [#9](https://github.com/takyafumin/sample-laravel-bref/issues/9) で扱う。
