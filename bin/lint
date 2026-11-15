@@ -1,0 +1,55 @@
+#!/bin/sh
+# Run all formatters/linters in check mode. Used locally and in CI.
+# Usage: bin/lint          check only
+#        bin/lint --fix    apply Pint and Prettier fixes, then check
+# Non-PHP tools run in Docker so they don't depend on the host's Node.js.
+set -eu
+cd "$(dirname "$0")/.."
+
+fix=false
+[ "${1:-}" = "--fix" ] && fix=true
+
+PRETTIER_IMAGE=node:26-alpine
+PRETTIER_VERSION=3.6.2
+SHELLCHECK_IMAGE=koalaman/shellcheck:v0.11.0
+HADOLINT_IMAGE=hadolint/hadolint:v2.14.0
+ACTIONLINT_IMAGE=rhysd/actionlint:1.7.8
+JS_FILES="docker/gateway/server.mjs"
+SHELL_FILES="bin/lint bin/local-artisan"
+
+status=0
+run() {
+  printf "\n==> %s\n" "$1"
+  shift
+  if ! "$@"; then
+    status=1
+  fi
+}
+
+# shellcheck disable=SC2329 # invoked indirectly through run()
+prettier() {
+  docker run --rm -v "$PWD:/work:ro" -w /work "$PRETTIER_IMAGE" \
+    npx --yes "prettier@$PRETTIER_VERSION" "$@"
+}
+
+if $fix; then
+  vendor/bin/pint
+  # shellcheck disable=SC2086 # word splitting of the file list is intended
+  docker run --rm -v "$PWD:/work" -w /work "$PRETTIER_IMAGE" \
+    npx --yes "prettier@$PRETTIER_VERSION" --write $JS_FILES
+fi
+
+run "Pint (PHP format)" vendor/bin/pint --test
+run "Larastan (PHP static analysis)" vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+# shellcheck disable=SC2086
+run "Prettier (JS format)" prettier --check $JS_FILES
+# shellcheck disable=SC2086
+run "ShellCheck" docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" $SHELL_FILES
+run "Hadolint (Dockerfile)" sh -c "docker run --rm -i $HADOLINT_IMAGE < docker/serverless/Dockerfile"
+run "docker compose config" sh -c "APP_KEY=dummy docker compose config --quiet"
+run "actionlint (GitHub Actions)" docker run --rm -v "$PWD:/repo:ro" -w /repo "$ACTIONLINT_IMAGE"
+
+if [ "$status" -ne 0 ]; then
+  echo "Lint failed." >&2
+fi
+exit "$status"

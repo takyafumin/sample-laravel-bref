@@ -61,6 +61,33 @@ bin/local-artisan "migrate --force"
 
 http://localhost:8000/ を開く。
 
+### コード品質チェック（必須）
+
+フォーマッタと linter をまとめて実行する。CI（`.github/workflows/ci.yml`）でも PR ごとに同じチェックとテストが走る。
+
+| 対象 | ツール |
+|---|---|
+| PHP | Pint（フォーマット）、Larastan / PHPStan level max（静的解析） |
+| JavaScript | Prettier |
+| シェルスクリプト | ShellCheck |
+| Dockerfile | Hadolint |
+| compose.yaml | `docker compose config` |
+| GitHub Actions | actionlint |
+
+PHP 以外のツールは Docker で動かすため、ホストの Node.js のバージョンには依存しない。
+
+```bash
+composer lint
+```
+
+```bash
+composer lint:fix
+```
+
+```bash
+php artisan test
+```
+
 ### その他
 
 ```bash

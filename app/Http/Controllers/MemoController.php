@@ -23,11 +23,11 @@ class MemoController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
-        $validated = $request->validate([
+        $request->validate([
             'body' => ['required', 'string', 'max:1000'],
         ]);
 
-        Memo::create($validated);
+        Memo::create(['body' => $request->string('body')->toString()]);
 
         return redirect()->route('memos.index');
     }
