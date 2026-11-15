@@ -89,7 +89,7 @@ services:
       NPM_CONFIG_UPDATE_NOTIFIER: "false"
       E2E_BASE_URL: ${E2E_BASE_URL:-http://gateway:8000}
     # Chromium needs more shared memory than Docker's 64 MB default.
-    ipc: host
+    shm_size: 1gb
     volumes:
       - ./e2e:/e2e
       # Keep node_modules inside the container, not in the host's e2e/.
