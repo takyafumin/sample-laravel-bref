@@ -1,0 +1,26 @@
+#!/bin/sh
+# Remove a deployed stage. The versioned database bucket must be emptied
+# (all object versions and delete markers) before CloudFormation can delete it.
+# Usage: bin/aws-remove [stage]   (default: dev)
+set -eu
+cd "$(dirname "$0")/.."
+stage="${1:-dev}"
+profile="${AWS_PROFILE:-takyafumin}"
+region=ap-northeast-1
+stack="sample-laravel-bref-$stage"
+
+bucket=$(aws cloudformation describe-stacks --profile "$profile" --region "$region" --stack-name "$stack" \
+  --query "Stacks[0].Outputs[?OutputKey=='DatabaseBucketName'].OutputValue" --output text)
+if [ -n "$bucket" ] && [ "$bucket" != "None" ]; then
+  echo "Emptying s3://$bucket (all versions)..."
+  while :; do
+    batch=$(aws s3api list-object-versions --profile "$profile" --region "$region" --bucket "$bucket" --max-items 1000 \
+      --query '{Objects: [Versions, DeleteMarkers][][].{Key: Key, VersionId: VersionId}}' --output json)
+    if [ "$(printf '%s' "$batch" | jq '.Objects | length')" -eq 0 ]; then
+      break
+    fi
+    aws s3api delete-objects --profile "$profile" --region "$region" --bucket "$bucket" \
+      --delete "$(printf '%s' "$batch" | jq -c '. + {Quiet: true}')" >/dev/null
+  done
+fi
+bin/serverless remove --stage "$stage"

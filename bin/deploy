@@ -1,0 +1,12 @@
+#!/bin/sh
+# Deploy to AWS without dev dependencies, then restore them.
+# Usage: bin/deploy [stage] [serverless deploy options...]   (default stage: dev)
+# Example: bin/deploy dev --force   (redeploy even without changes)
+set -eu
+cd "$(dirname "$0")/.."
+stage="${1:-dev}"
+[ $# -gt 0 ] && shift
+restore() { composer install --no-interaction --quiet; }
+trap restore EXIT
+composer install --no-dev --optimize-autoloader --prefer-dist --no-interaction --quiet
+bin/serverless deploy --stage "$stage" "$@"
