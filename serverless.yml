@@ -10,6 +10,7 @@ provider:
         # Resolved from SSM Parameter Store at deploy time (the functions run in a
         # VPC without internet access, so runtime SSM lookups are not possible).
         # Create it with: bin/aws-put-app-key <stage>
+        # osls decrypts SecureString parameters by default (WithDecryption).
         APP_KEY: ${ssm:/${self:service}/${sls:stage}/app-key}
         APP_DEBUG: ${param:debug}
         SESSION_DRIVER: cookie
@@ -259,10 +260,14 @@ resources:
                                 -   Effect: Allow
                                     Action:
                                         - events:DescribeRule
-                                        - events:ListRuleNamesByTarget
-                                        - events:ListRules
                                         - events:ListTargetsByRule
                                     Resource: arn:aws:events:*:*:rule/*
+                                # Read-only listing, granted on "*" (not confirmed to support rule-level scoping)
+                                -   Effect: Allow
+                                    Action:
+                                        - events:ListRuleNamesByTarget
+                                        - events:ListRules
+                                    Resource: '*'
         DatabaseFileSystem:
             Type: AWS::S3Files::FileSystem
             Properties:

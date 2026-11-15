@@ -59,6 +59,8 @@ CloudFormation の論理 ID は、serverless.yml の `resources` に書いたも
 | S3 Files 同期ロール | `s3:ListBucket`、`s3:ListBucketVersions` | `DatabaseBucket` |
 | S3 Files 同期ロール | `s3:GetObject*`、`s3:PutObject*`、`s3:DeleteObject*`、`s3:List*`、`s3:AbortMultipartUpload` | `DatabaseBucket/*` |
 | S3 Files 同期ロール | EventBridge ルールの管理 | `DO-NOT-DELETE-S3-Files*` |
+| S3 Files 同期ロール | EventBridge ルールの参照（`DescribeRule`、`ListTargetsByRule`） | すべてのルール（`rule/*`） |
+| S3 Files 同期ロール | EventBridge ルールの一覧（`ListRules`、`ListRuleNamesByTarget`） | `*`（ルール単位で絞れるか確認できなかったため。読み取りのみ） |
 
 - 同期ロールの信頼ポリシーは `elasticfilesystem.amazonaws.com` に限り、`aws:SourceAccount` と `aws:SourceArn`（このアカウント・リージョンの S3 Files ファイルシステム）で条件を付けている。
 - `s3files:ClientRootAccess` は付与しない（root としてのアクセスは不要）。
