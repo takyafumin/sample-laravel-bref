@@ -93,14 +93,7 @@ php artisan test
 
 [Playwright](https://playwright.dev/) でブラウザを動かし、Lambda として動いているアプリを外側から確認する（[e2e/](e2e/)）。Playwright は公式のコンテナイメージ（`mcr.microsoft.com/playwright`）で動かすので、ホストに Node.js は要らない。
 
-| 確認すること | 内容 |
-|---|---|
-| 表示 | 一覧が 200 で表示され、Lambda 上で動いている（`LAMBDA_TASK_ROOT` がある）こと |
-| CRUD | メモを追加すると一覧に出て、削除すると消えること |
-| バリデーション | 1000 文字を超えるメモがサーバー側で弾かれること |
-| ヘルスチェック | `/up` が 200 を返すこと |
-| CSRF | トークンなしの POST が 419 になること |
-| 不要なルート | `/signed-upload-url`、`/storage/...` などが 404 になること |
+各テストケースが何を確認しているか、自動テストで確認していないことは何かは、[docs/test-cases.md](docs/test-cases.md) にまとめている（Feature テストも含む）。
 
 ローカルのスタック（`docker compose up -d` とマイグレーション）を起動してからテストする。
 

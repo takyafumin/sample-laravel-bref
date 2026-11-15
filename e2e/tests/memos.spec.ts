@@ -1,12 +1,13 @@
 import { expect, test } from '@playwright/test';
 
+// Test cases are documented in docs/test-cases.md (keep the IDs in sync).
 // These tests may run against a shared, deployed database: every memo they
 // create has a unique body and is deleted again by the same test.
 function uniqueBody(label: string): string {
     return `e2e ${label} ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-test('shows the memo list served by the Lambda runtime', async ({ page }) => {
+test('E2E-01 shows the memo list served by the Lambda runtime', async ({ page }) => {
     const response = await page.goto('/');
 
     expect(response?.status()).toBe(200);
@@ -14,7 +15,7 @@ test('shows the memo list served by the Lambda runtime', async ({ page }) => {
     await expect(page.locator('dl.runtime dt:text-is("Lambda") + dd')).toHaveText('yes');
 });
 
-test('adds a memo and deletes it', async ({ page }) => {
+test('E2E-02 adds a memo and deletes it', async ({ page }) => {
     const body = uniqueBody('crud');
     await page.goto('/');
 
@@ -31,7 +32,7 @@ test('adds a memo and deletes it', async ({ page }) => {
     await expect(page.getByRole('listitem').filter({ hasText: body })).toHaveCount(0);
 });
 
-test('shows a validation error for a too long memo', async ({ page }) => {
+test('E2E-03 shows a validation error for a too long memo', async ({ page }) => {
     await page.goto('/');
     const input = page.getByPlaceholder('メモを入力');
     // Bypass the browser-side maxlength to exercise the server-side validation.
@@ -44,13 +45,13 @@ test('shows a validation error for a too long memo', async ({ page }) => {
     await expect(page.getByRole('listitem').filter({ hasText: 'a'.repeat(1001) })).toHaveCount(0);
 });
 
-test('responds to the health check', async ({ request }) => {
+test('E2E-04 responds to the health check', async ({ request }) => {
     const response = await request.get('/up');
 
     expect(response.status()).toBe(200);
 });
 
-test('rejects a POST without a CSRF token', async ({ request }) => {
+test('E2E-05 rejects a POST without a CSRF token', async ({ request }) => {
     const response = await request.post('/memos', {
         form: { body: uniqueBody('csrf') },
         maxRedirects: 0,
@@ -59,7 +60,7 @@ test('rejects a POST without a CSRF token', async ({ request }) => {
     expect(response.status()).toBe(419);
 });
 
-test('returns 404 for routes that are not defined', async ({ request }) => {
+test('E2E-06 returns 404 for routes that are not defined', async ({ request }) => {
     for (const path of ['/signed-upload-url', '/storage/e2e.txt', '/does-not-exist']) {
         const response = await request.get(path, { maxRedirects: 0 });
         expect(response.status(), path).toBe(404);
