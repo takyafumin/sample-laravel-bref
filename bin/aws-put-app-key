@@ -1,0 +1,16 @@
+#!/bin/sh
+# Create the Laravel APP_KEY for a stage in SSM Parameter Store (SecureString).
+# Does nothing if the parameter already exists.
+# Usage: bin/aws-put-app-key [stage]   (default: dev)
+set -eu
+cd "$(dirname "$0")/.."
+stage="${1:-dev}"
+profile="${AWS_PROFILE:-takyafumin}"
+name="/sample-laravel-bref/$stage/app-key"
+if aws ssm get-parameter --profile "$profile" --region ap-northeast-1 --name "$name" >/dev/null 2>&1; then
+  echo "$name already exists; leaving it unchanged."
+  exit 0
+fi
+aws ssm put-parameter --profile "$profile" --region ap-northeast-1 \
+  --name "$name" --type SecureString --value "$(php artisan key:generate --show)" >/dev/null
+echo "Created $name"

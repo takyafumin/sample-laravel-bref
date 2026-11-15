@@ -7,9 +7,11 @@ provider:
     architecture: arm64
     environment:
         APP_ENV: ${param:appEnv}
-        # TODO(#2): Replace with an SSM secret before deploying
-        # https://bref.sh/docs/environment/variables#secrets
-        APP_KEY: 'base64:aqIOr0nFlPj0RtsUR4MTtIu4EBWohrOr9qcw0xVZE6c='
+        # Resolved from SSM Parameter Store at deploy time (the functions run in a
+        # VPC without internet access, so runtime SSM lookups are not possible).
+        # Create it with: bin/aws-put-app-key <stage>
+        # osls decrypts SecureString parameters by default (WithDecryption).
+        APP_KEY: ${ssm:/${self:service}/${sls:stage}/app-key}
         APP_DEBUG: ${param:debug}
         SESSION_DRIVER: cookie
         # Not shared between requests: use database (or dynamodb) for a shared cache, see https://bref.sh/docs/laravel/caching
@@ -19,10 +21,27 @@ provider:
         # Logging configuration: https://bref.sh/docs/environment/logs
         LOG_CHANNEL: stderr
         LOG_STDERR_FORMATTER: Bref\Monolog\CloudWatchFormatter
-        # SQLite on S3, mounted with S3 Files at /mnt/db (mount is configured in #2).
+        # SQLite on S3, mounted with S3 Files at /mnt/db (see resources below).
         # compose.yaml mounts .docker-data/db at the same path for local runs.
         DB_CONNECTION: sqlite
         DB_DATABASE: /mnt/db/database.sqlite
+    # The functions must run in the VPC that holds the S3 Files mount targets.
+    # No NAT gateway: the functions don't need internet access.
+    vpc:
+        securityGroupIds:
+            - !Ref LambdaSecurityGroup
+        subnetIds:
+            - !Ref PrivateSubnetA
+            - !Ref PrivateSubnetC
+    iam:
+        role:
+            statements:
+                # Mount the S3 file system read-write
+                -   Effect: Allow
+                    Action:
+                        - s3files:ClientMount
+                        - s3files:ClientWrite
+                    Resource: !GetAtt DatabaseFileSystem.FileSystemArn
 
 functions:
 
@@ -86,3 +105,232 @@ package:
 plugins:
     # We need to include the Bref plugin
     - ./vendor/bref/bref
+
+# SQLite on S3 via S3 Files:
+#   S3 bucket (versioned) <-sync- S3 Files file system -NFS-> mount targets -> Lambda (/mnt/db)
+# https://docs.aws.amazon.com/lambda/latest/dg/configuration-filesystem-s3files.html
+resources:
+    Resources:
+        # --- Network: private subnets only, no internet access ---
+        Vpc:
+            Type: AWS::EC2::VPC
+            Properties:
+                CidrBlock: 10.0.0.0/16
+                EnableDnsSupport: true
+                EnableDnsHostnames: true
+                Tags:
+                    -   Key: Name
+                        Value: ${self:service}-${sls:stage}
+        PrivateSubnetA:
+            Type: AWS::EC2::Subnet
+            Properties:
+                VpcId: !Ref Vpc
+                CidrBlock: 10.0.1.0/24
+                AvailabilityZone: !Select [0, !GetAZs '']
+                Tags:
+                    -   Key: Name
+                        Value: ${self:service}-${sls:stage}-private-a
+        PrivateSubnetC:
+            Type: AWS::EC2::Subnet
+            Properties:
+                VpcId: !Ref Vpc
+                CidrBlock: 10.0.2.0/24
+                AvailabilityZone: !Select [1, !GetAZs '']
+                Tags:
+                    -   Key: Name
+                        Value: ${self:service}-${sls:stage}-private-c
+        LambdaSecurityGroup:
+            Type: AWS::EC2::SecurityGroup
+            Properties:
+                GroupDescription: Lambda functions (NFS client of the S3 file system)
+                VpcId: !Ref Vpc
+                # Placeholder rule matching no traffic: it replaces the default
+                # allow-all egress. The real rule is LambdaNfsEgress below, kept
+                # separate to avoid a circular reference between the two groups.
+                SecurityGroupEgress:
+                    -   IpProtocol: icmp
+                        FromPort: 252
+                        ToPort: 86
+                        CidrIp: 255.255.255.255/32
+                        Description: Disallow all traffic
+        LambdaNfsEgress:
+            Type: AWS::EC2::SecurityGroupEgress
+            Properties:
+                GroupId: !Ref LambdaSecurityGroup
+                IpProtocol: tcp
+                FromPort: 2049
+                ToPort: 2049
+                DestinationSecurityGroupId: !Ref MountTargetSecurityGroup
+                Description: NFS to S3 Files mount targets
+        MountTargetSecurityGroup:
+            Type: AWS::EC2::SecurityGroup
+            Properties:
+                GroupDescription: S3 Files mount targets
+                VpcId: !Ref Vpc
+                SecurityGroupIngress:
+                    -   IpProtocol: tcp
+                        FromPort: 2049
+                        ToPort: 2049
+                        SourceSecurityGroupId: !Ref LambdaSecurityGroup
+                        Description: NFS from Lambda functions
+
+        # --- Storage: versioned bucket (required by S3 Files) ---
+        # Retained on stack deletion: S3 Files may still export pending writes
+        # while the stack is being deleted. bin/aws-remove empties and deletes it
+        # after `serverless remove`.
+        DatabaseBucket:
+            Type: AWS::S3::Bucket
+            DeletionPolicy: Retain
+            UpdateReplacePolicy: Retain
+            Properties:
+                VersioningConfiguration:
+                    Status: Enabled
+                BucketEncryption:
+                    ServerSideEncryptionConfiguration:
+                        -   ServerSideEncryptionByDefault:
+                                SSEAlgorithm: AES256
+                PublicAccessBlockConfiguration:
+                    BlockPublicAcls: true
+                    BlockPublicPolicy: true
+                    IgnorePublicAcls: true
+                    RestrictPublicBuckets: true
+                LifecycleConfiguration:
+                    Rules:
+                        # Every SQLite write creates a new object version
+                        -   Id: expire-noncurrent-versions
+                            Status: Enabled
+                            NoncurrentVersionExpiration:
+                                NoncurrentDays: 1
+                            AbortIncompleteMultipartUpload:
+                                DaysAfterInitiation: 1
+
+        # --- S3 Files ---
+        # Role assumed by S3 Files to synchronize the file system with the bucket
+        DatabaseFileSystemRole:
+            Type: AWS::IAM::Role
+            Properties:
+                AssumeRolePolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                        -   Effect: Allow
+                            Principal:
+                                Service: elasticfilesystem.amazonaws.com
+                            Action: sts:AssumeRole
+                            Condition:
+                                StringEquals:
+                                    aws:SourceAccount: !Ref AWS::AccountId
+                                ArnLike:
+                                    aws:SourceArn: !Sub 'arn:aws:s3files:${AWS::Region}:${AWS::AccountId}:file-system/*'
+                Policies:
+                    -   PolicyName: s3files-bucket-sync
+                        PolicyDocument:
+                            Version: '2012-10-17'
+                            Statement:
+                                -   Effect: Allow
+                                    Action:
+                                        - s3:ListBucket
+                                        - s3:ListBucketVersions
+                                    Resource: !GetAtt DatabaseBucket.Arn
+                                    Condition:
+                                        StringEquals:
+                                            aws:ResourceAccount: !Ref AWS::AccountId
+                                -   Effect: Allow
+                                    Action:
+                                        - s3:AbortMultipartUpload
+                                        - s3:DeleteObject*
+                                        - s3:GetObject*
+                                        - s3:List*
+                                        - s3:PutObject*
+                                    Resource: !Sub '${DatabaseBucket.Arn}/*'
+                                    Condition:
+                                        StringEquals:
+                                            aws:ResourceAccount: !Ref AWS::AccountId
+                                -   Effect: Allow
+                                    Action:
+                                        - events:DeleteRule
+                                        - events:DisableRule
+                                        - events:EnableRule
+                                        - events:PutRule
+                                        - events:PutTargets
+                                        - events:RemoveTargets
+                                    Resource: arn:aws:events:*:*:rule/DO-NOT-DELETE-S3-Files*
+                                    Condition:
+                                        StringEquals:
+                                            events:ManagedBy: elasticfilesystem.amazonaws.com
+                                -   Effect: Allow
+                                    Action:
+                                        - events:DescribeRule
+                                        - events:ListTargetsByRule
+                                    Resource: arn:aws:events:*:*:rule/*
+                                # Read-only listing, granted on "*" (not confirmed to support rule-level scoping)
+                                -   Effect: Allow
+                                    Action:
+                                        - events:ListRuleNamesByTarget
+                                        - events:ListRules
+                                    Resource: '*'
+        DatabaseFileSystem:
+            Type: AWS::S3Files::FileSystem
+            Properties:
+                Bucket: !GetAtt DatabaseBucket.Arn
+                RoleArn: !GetAtt DatabaseFileSystemRole.Arn
+                Tags:
+                    -   Key: Name
+                        Value: ${self:service}-${sls:stage}
+        DatabaseMountTargetA:
+            Type: AWS::S3Files::MountTarget
+            Properties:
+                FileSystemId: !GetAtt DatabaseFileSystem.FileSystemId
+                SubnetId: !Ref PrivateSubnetA
+                SecurityGroups:
+                    - !Ref MountTargetSecurityGroup
+        DatabaseMountTargetC:
+            Type: AWS::S3Files::MountTarget
+            Properties:
+                FileSystemId: !GetAtt DatabaseFileSystem.FileSystemId
+                SubnetId: !Ref PrivateSubnetC
+                SecurityGroups:
+                    - !Ref MountTargetSecurityGroup
+        # All clients act as uid/gid 1000 and see /lambda as the root directory
+        DatabaseAccessPoint:
+            Type: AWS::S3Files::AccessPoint
+            Properties:
+                FileSystemId: !GetAtt DatabaseFileSystem.FileSystemId
+                PosixUser:
+                    Uid: '1000'
+                    Gid: '1000'
+                RootDirectory:
+                    Path: /lambda
+                    CreationPermissions:
+                        OwnerUid: '1000'
+                        OwnerGid: '1000'
+                        Permissions: '755'
+
+    # Mount the file system on both functions. osls has no native S3 Files
+    # support, so the generated function resources are extended directly.
+    extensions:
+        WebLambdaFunction:
+            DependsOn: [DatabaseMountTargetA, DatabaseMountTargetC, LambdaNfsEgress]
+            Properties:
+                FileSystemConfigs:
+                    -   Arn: !GetAtt DatabaseAccessPoint.AccessPointArn
+                        LocalMountPath: /mnt/db
+                        # Direct S3 reads need network access to S3 (no NAT/endpoint
+                        # here) and bring nothing for a small SQLite file.
+                        S3FilesConfig:
+                            DirectS3Read: DISABLED
+        ArtisanLambdaFunction:
+            DependsOn: [DatabaseMountTargetA, DatabaseMountTargetC, LambdaNfsEgress]
+            Properties:
+                FileSystemConfigs:
+                    -   Arn: !GetAtt DatabaseAccessPoint.AccessPointArn
+                        LocalMountPath: /mnt/db
+                        # Direct S3 reads need network access to S3 (no NAT/endpoint
+                        # here) and bring nothing for a small SQLite file.
+                        S3FilesConfig:
+                            DirectS3Read: DISABLED
+
+    Outputs:
+        DatabaseBucketName:
+            Value: !Ref DatabaseBucket
+        DatabaseFileSystemId:
+            Value: !GetAtt DatabaseFileSystem.FileSystemId

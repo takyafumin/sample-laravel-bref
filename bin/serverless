@@ -1,0 +1,21 @@
+#!/bin/sh
+# Run the Serverless Framework (osls) container with temporary AWS credentials
+# exported from a host profile (works with SSO: run `aws sso login` first).
+# Usage: bin/serverless <serverless args...>
+# Requires: aws CLI v2, jq, docker
+set -eu
+cd "$(dirname "$0")/.."
+profile="${AWS_PROFILE:-takyafumin}"
+if ! creds=$(aws configure export-credentials --profile "$profile" --format process); then
+  echo "Could not get AWS credentials for profile '$profile' (try: aws sso login --profile $profile)" >&2
+  exit 1
+fi
+# Parse the JSON output instead of evaluating shell code. Credentials go through
+# this process's environment, never the command line.
+AWS_ACCESS_KEY_ID=$(printf '%s' "$creds" | jq -er '.AccessKeyId')
+AWS_SECRET_ACCESS_KEY=$(printf '%s' "$creds" | jq -er '.SecretAccessKey')
+AWS_SESSION_TOKEN=$(printf '%s' "$creds" | jq -r '.SessionToken // empty')
+export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+exec docker compose run --rm -T \
+  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
+  serverless "$@"
