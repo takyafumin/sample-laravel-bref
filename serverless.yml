@@ -1,0 +1,88 @@
+service: sample-laravel-bref
+
+provider:
+    name: aws
+    region: ap-northeast-1
+    # Same architecture as the local runtime image (bref/arm-php-85)
+    architecture: arm64
+    environment:
+        APP_ENV: ${param:appEnv}
+        # TODO(#2): Replace with an SSM secret before deploying
+        # https://bref.sh/docs/environment/variables#secrets
+        APP_KEY: 'base64:aqIOr0nFlPj0RtsUR4MTtIu4EBWohrOr9qcw0xVZE6c='
+        APP_DEBUG: ${param:debug}
+        SESSION_DRIVER: cookie
+        # Not shared between requests: use database (or dynamodb) for a shared cache, see https://bref.sh/docs/laravel/caching
+        CACHE_STORE: array
+        # Maintenance mode: https://bref.sh/docs/laravel/maintenance-mode
+        MAINTENANCE_MODE: ${param:maintenance, null}
+        # Logging configuration: https://bref.sh/docs/environment/logs
+        LOG_CHANNEL: stderr
+        LOG_STDERR_FORMATTER: Bref\Monolog\CloudWatchFormatter
+        # SQLite on S3, mounted with S3 Files at /mnt/db (mount is configured in #2).
+        # compose.yaml mounts .docker-data/db at the same path for local runs.
+        DB_CONNECTION: sqlite
+        DB_DATABASE: /mnt/db/database.sqlite
+
+functions:
+
+    # This function runs the Laravel website/API
+    web:
+        handler: public/index.php
+        runtime: php-85-fpm
+        timeout: 28 # in seconds (API Gateway has a timeout of 29 seconds)
+        # SQLite does not handle concurrent writers well on a network file system.
+        # This limits the web function only: run writes via `artisan` (e.g. migrate)
+        # while the app is in maintenance mode.
+        reservedConcurrency: 1
+        events:
+            - httpApi: '*'
+
+    # This function lets us run artisan commands in Lambda (e.g. migrations)
+    artisan:
+        handler: artisan
+        runtime: php-85-console
+        timeout: 720 # in seconds
+        reservedConcurrency: 1
+
+# Environment-specific parameters
+# See https://github.com/oss-serverless/serverless/blob/main/docs/guides/parameters.md
+params:
+    default:
+        # Laravel's APP_ENV. See https://bref.sh/docs/laravel/environments
+        appEnv: ${sls:stage}
+        debug: 0
+    prod:
+        # Laravel expects "production" for `app()->isProduction()` to work correctly
+        appEnv: production
+    dev:
+        debug: 1 # Enable debug in `dev`
+
+package:
+    # Files and directories to exclude from deployment
+    patterns:
+        - '!.env' # Don't deploy local config
+        - '!.env.*'
+        # Local verification tooling (compose.yaml, gateway emulator, SQLite volume)
+        - '!.docker-data/**'
+        - '!docker/**'
+        - '!bin/**'
+        - '!compose.yaml'
+        - '!node_modules/**'
+        - '!public/storage'
+        - '!resources/assets/**'
+        - '!resources/css/**'
+        - '!resources/images/**'
+        - '!resources/js/**'
+        - '!storage/**'
+        - '!tests/**'
+        - '!database/*.sqlite'
+        # Exclude assets except for the manifest files
+        - '!public/build/**'
+        - 'public/build/manifest.json'
+        - 'public/build/fonts-manifest.json'
+        - 'public/build/assets/fonts-*.css'
+
+plugins:
+    # We need to include the Bref plugin
+    - ./vendor/bref/bref

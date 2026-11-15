@@ -1,3 +1,113 @@
 # sample-laravel-bref
 
 Bref で Laravel を AWS Lambda にデプロイする構成の検証用リポジトリ。
+
+- Laravel 13 / PHP 8.5 / Bref 3（`bref/laravel-bridge`）
+- 検証用アプリ: 簡易メモ（一覧・追加・削除）
+- DB: SQLite。AWS では S3 バケットを [S3 Files](https://docs.aws.amazon.com/lambda/latest/dg/configuration-filesystem-s3files.html) で `/mnt/db` にマウントして使う（[#2](https://github.com/takyafumin/sample-laravel-bref/issues/2)）
+
+## ローカル検証（[#1](https://github.com/takyafumin/sample-laravel-bref/issues/1)）
+
+AWS 上と同じ Bref の Lambda ランタイムイメージ（`bref/arm-php-85:3`）を docker compose で動かす。
+イメージに内蔵された Lambda Runtime Interface Emulator（RIE）が起動するため、1リクエストが1回の Lambda 呼び出しになる。
+
+```
+browser ──HTTP──▶ gateway (:8000) ──API Gateway v2 event──▶ web (RIE + Bref FPM runtime)
+                                                                 │
+bin/local-artisan ──event "<command>"──▶ artisan (:9001, RIE + Bref console runtime)
+                                                                 │
+                                                  /mnt/db/database.sqlite (.docker-data/db)
+```
+
+| サービス | 役割 |
+|---|---|
+| `web` | `public/index.php` を Bref FPM ランタイムで実行する（serverless.yml の `web` 関数に相当） |
+| `artisan` | `artisan` を Bref console ランタイムで実行する（serverless.yml の `artisan` 関数に相当） |
+| `gateway` | HTTP リクエストを API Gateway（HTTP API, payload 2.0）のイベントに変換して `web` を呼び出す（[docker/gateway/server.mjs](docker/gateway/server.mjs)） |
+| `serverless` | Node.js 26 上の Serverless Framework（osls）。`tools` プロファイルのため `up` では起動しない |
+
+Lambda 上の挙動に近づけるため、次の設定にしている。
+
+- コードは `/var/task` に読み取り専用でマウントする
+- デプロイされない `storage/` と `.env` はコンテナ内で隠す
+- コンテナは Lambda と同じ非 root ユーザー（uid 993）で動かす
+- RIE は同時に1件しか処理できないため、gateway がリクエストを直列化する（web 関数の reservedConcurrency 1 に相当）
+
+### 起動
+
+```bash
+cp .env.example .env
+```
+
+```bash
+composer install
+```
+
+```bash
+php artisan key:generate
+```
+
+```bash
+mkdir -p .docker-data/db && chmod 777 .docker-data/db  # Linux: コンテナの uid 993 から書き込めるようにする
+```
+
+```bash
+docker compose up -d
+```
+
+```bash
+bin/local-artisan "migrate --force"
+```
+
+http://localhost:8000/ を開く。
+
+### コード品質チェック（必須）
+
+フォーマッタと linter をまとめて実行する。CI（`.github/workflows/ci.yml`）でも PR ごとに同じチェックとテストが走る。
+
+| 対象 | ツール |
+|---|---|
+| クレデンシャル混入 | gitleaks（コミット履歴、未コミットの変更、ステージ済みの変更） |
+| PHP | Pint（フォーマット）、Larastan / PHPStan level max（静的解析） |
+| JavaScript | Prettier |
+| シェルスクリプト | ShellCheck |
+| Dockerfile | Hadolint |
+| compose.yaml | `docker compose config` |
+| GitHub Actions | actionlint |
+
+PHP 以外のツールは Docker で動かすため、ホストの Node.js のバージョンには依存しない。
+
+```bash
+composer lint
+```
+
+```bash
+composer lint:fix
+```
+
+```bash
+php artisan test
+```
+
+### その他
+
+```bash
+docker compose logs -f web
+```
+
+パッケージの確認は、本番と同じく dev 依存を除いた状態で行う（終わったら `composer install` で戻す）。
+AWS プロファイルは既定で `takyafumin`。別のプロファイルを使うときは環境変数 `AWS_PROFILE` で上書きする。
+
+```bash
+composer install --no-dev --optimize-autoloader --prefer-dist
+```
+
+```bash
+docker compose run --rm serverless package --stage dev
+```
+
+```bash
+docker compose down
+```
+
+SQLite のデータは `.docker-data/db/` に残る。消すときはこのディレクトリを削除する。

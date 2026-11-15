@@ -1,0 +1,79 @@
+# Local verification of the Bref runtime (see README.md).
+#
+# - web / artisan run the same Bref Lambda runtime image used on AWS. Without
+#   AWS_LAMBDA_RUNTIME_API set, the image starts the Lambda Runtime Interface
+#   Emulator (RIE), so each request is a real Lambda invocation.
+# - gateway converts browser HTTP requests into API Gateway (HTTP API v2) events.
+# - The app code is mounted read-only, like /var/task on Lambda.
+# - /mnt/db stands in for the S3 Files mount used on AWS (Step 2).
+
+x-lambda-env: &lambda-env
+  APP_ENV: local
+  APP_DEBUG: "true"
+  APP_KEY: ${APP_KEY:?Set APP_KEY in .env (php artisan key:generate)}
+  DB_CONNECTION: sqlite
+  DB_DATABASE: /mnt/db/database.sqlite
+  SESSION_DRIVER: cookie
+  CACHE_STORE: array
+  LOG_CHANNEL: stderr
+  AWS_LAMBDA_FUNCTION_TIMEOUT: "28"
+
+services:
+  web:
+    image: bref/arm-php-85:3
+    platform: linux/arm64
+    # Lambda runs functions as a non-root sandbox user (sbx_user1051). Running
+    # as root locally would make PHP-FPM workers (nobody) unable to write /tmp.
+    user: "993:990"
+    restart: unless-stopped
+    command: public/index.php
+    environment:
+      <<: *lambda-env
+      BREF_RUNTIME: fpm
+    volumes: &lambda-volumes
+      - .:/var/task:ro
+      # Mirror serverless.yml `package.patterns`: storage/** and .env are not deployed.
+      - type: tmpfs
+        target: /var/task/storage
+        read_only: true
+      - /dev/null:/var/task/.env:ro
+      - ./.docker-data/db:/mnt/db
+
+  artisan:
+    image: bref/arm-php-85:3
+    platform: linux/arm64
+    user: "993:990"
+    restart: unless-stopped
+    command: artisan
+    environment:
+      <<: *lambda-env
+      BREF_RUNTIME: console
+      AWS_LAMBDA_FUNCTION_TIMEOUT: "720"
+    volumes: *lambda-volumes
+    ports:
+      - "127.0.0.1:9001:8080"
+
+  gateway:
+    image: node:26-alpine
+    command: node /gateway/server.mjs
+    environment:
+      LAMBDA_URL: http://web:8080/2015-03-31/functions/function/invocations
+    volumes:
+      - ./docker/gateway:/gateway:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      - web
+
+  # Serverless Framework (osls) on Node.js 26 (latest at the time of writing). Not started by `up`;
+  # run with: docker compose run --rm serverless <command>
+  serverless:
+    build: docker/serverless
+    profiles: [tools]
+    working_dir: /app
+    environment:
+      AWS_PROFILE: ${AWS_PROFILE:-takyafumin}
+      AWS_REGION: ap-northeast-1
+    volumes:
+      - .:/app
+      - ${HOME}/.aws:/root/.aws:ro
