@@ -4,8 +4,11 @@
 # Example: bin/deploy dev --force   (redeploy even without changes)
 set -eu
 cd "$(dirname "$0")/.."
-stage="${1:-dev}"
-[ $# -gt 0 ] && shift
+stage="dev"
+if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
+  stage="$1"
+  shift
+fi
 restore() { composer install --no-interaction --quiet; }
 trap restore EXIT
 composer install --no-dev --optimize-autoloader --prefer-dist --no-interaction --quiet
