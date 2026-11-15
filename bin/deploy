@@ -9,7 +9,16 @@ if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
   stage="$1"
   shift
 fi
-restore() { composer install --no-interaction --quiet; }
+# Restore dev dependencies on exit, keeping the deploy's exit status even if
+# the restore itself fails.
+restore() {
+  status=$?
+  trap - EXIT
+  if ! composer install --no-interaction --quiet; then
+    echo "warning: failed to restore dev dependencies (run: composer install)" >&2
+  fi
+  exit "$status"
+}
 trap restore EXIT
 composer install --no-dev --optimize-autoloader --prefer-dist --no-interaction --quiet
 bin/serverless deploy --stage "$stage" "$@"

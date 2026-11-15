@@ -125,7 +125,7 @@ AWS プロファイルは既定で `takyafumin`（SSO）。別のプロファイ
 
 ### デプロイ
 
-ホストに必要なもの: AWS CLI v2、Docker、PHP と Composer（`bin/deploy` と `bin/aws-put-app-key` が使う）、jq（`bin/aws-remove` が使う）。
+ホストに必要なもの: AWS CLI v2、Docker、PHP と Composer（`bin/deploy` と `bin/aws-put-app-key` が使う）、jq（`bin/serverless` と `bin/aws-remove` が使う）。
 
 ```bash
 aws sso login --profile takyafumin
