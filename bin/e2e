@@ -1,0 +1,50 @@
+#!/bin/sh
+# Run the Playwright E2E tests (e2e/) in a container.
+# Usage: bin/e2e                 start the local stack (docker compose) and test it
+#        bin/e2e <base-url>      test a deployed endpoint, e.g. the API Gateway URL
+#        bin/e2e [<base-url>] -- <playwright test options...>
+# Requires: docker (and jq for the local stack, via bin/local-artisan)
+set -eu
+cd "$(dirname "$0")/.."
+
+base_url=""
+case "${1:-}" in
+  http://* | https://*)
+    base_url="$1"
+    shift
+    ;;
+  "" | --) ;;
+  *)
+    echo "usage: $0 [<base-url>] [-- <playwright test options...>]" >&2
+    echo "The base URL must start with http:// or https:// (got: $1)." >&2
+    exit 64
+    ;;
+esac
+if [ $# -gt 0 ]; then
+  if [ "$1" != "--" ]; then
+    echo "usage: $0 [<base-url>] [-- <playwright test options...>]" >&2
+    exit 64
+  fi
+  shift
+fi
+
+if [ -z "$base_url" ]; then
+  base_url="http://gateway:8000"
+  docker compose up -d web artisan gateway
+  # The artisan RIE needs a moment to accept invocations after startup.
+  attempt=1
+  until bin/local-artisan "migrate --force" >/dev/null 2>&1; do
+    if [ "$attempt" -ge 30 ]; then
+      echo "The local stack did not become ready (bin/local-artisan \"migrate --force\" kept failing)." >&2
+      bin/local-artisan "migrate --force" >&2 || true
+      exit 1
+    fi
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+fi
+
+echo "Running E2E tests against $base_url (traces of failed tests: e2e/test-results/)"
+rm -rf e2e/test-results
+E2E_BASE_URL="$base_url" exec docker compose run --rm -T e2e \
+  sh -c 'npm ci --no-audit --no-fund --loglevel=error && npx playwright test "$@"' sh "$@"
