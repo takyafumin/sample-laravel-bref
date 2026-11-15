@@ -25,6 +25,7 @@ services:
     # Lambda runs functions as a non-root sandbox user (sbx_user1051). Running
     # as root locally would make PHP-FPM workers (nobody) unable to write /tmp.
     user: "993:990"
+    restart: unless-stopped
     command: public/index.php
     environment:
       <<: *lambda-env
@@ -42,6 +43,7 @@ services:
     image: bref/arm-php-85:3
     platform: linux/arm64
     user: "993:990"
+    restart: unless-stopped
     command: artisan
     environment:
       <<: *lambda-env
@@ -52,7 +54,7 @@ services:
       - "127.0.0.1:9001:8080"
 
   gateway:
-    image: node:current-alpine
+    image: node:26-alpine
     command: node /gateway/server.mjs
     environment:
       LAMBDA_URL: http://web:8080/2015-03-31/functions/function/invocations
@@ -63,7 +65,7 @@ services:
     depends_on:
       - web
 
-  # Serverless Framework (osls) on the latest Node.js. Not started by `up`;
+  # Serverless Framework (osls) on Node.js 26 (latest at the time of writing). Not started by `up`;
   # run with: docker compose run --rm serverless <command>
   serverless:
     build: docker/serverless

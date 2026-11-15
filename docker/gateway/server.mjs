@@ -15,9 +15,13 @@ function toEvent(req, body) {
   const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
   const headers = {};
   for (const [name, value] of Object.entries(req.headers)) {
-    if (name === 'cookie') continue;
+    // API Gateway overwrites forwarding headers; never trust client-supplied ones.
+    if (name === 'cookie' || name.startsWith('x-forwarded-')) continue;
     headers[name] = Array.isArray(value) ? value.join(',') : value;
   }
+  headers['x-forwarded-for'] = req.socket.remoteAddress ?? '127.0.0.1';
+  headers['x-forwarded-proto'] = 'http';
+  headers['x-forwarded-port'] = String(req.socket.localPort ?? PORT);
   const cookies = req.headers.cookie ? req.headers.cookie.split(/;\s*/).filter(Boolean) : undefined;
   const contentType = req.headers['content-type'] ?? '';
   const isBase64Encoded = body.length > 0 && !TEXT_TYPES.test(contentType);
@@ -56,6 +60,18 @@ function toEvent(req, body) {
   };
 }
 
+// The RIE handles a single invocation at a time and crashes on concurrent
+// invokes. Serialize invocations, like a function with reserved concurrency 1
+// (AWS would throttle instead of queueing, which is fine for local use).
+let queue = Promise.resolve();
+function invoke(event) {
+  const run = queue.then(() =>
+    fetch(LAMBDA_URL, { method: 'POST', body: JSON.stringify(event) }).then((r) => r.json()),
+  );
+  queue = run.catch(() => {});
+  return run;
+}
+
 const server = http.createServer(async (req, res) => {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -63,8 +79,7 @@ const server = http.createServer(async (req, res) => {
   const started = Date.now();
 
   try {
-    const lambdaRes = await fetch(LAMBDA_URL, { method: 'POST', body: JSON.stringify(event) });
-    const result = await lambdaRes.json();
+    const result = await invoke(event);
 
     if (result?.errorMessage || typeof result?.statusCode !== 'number') {
       throw new Error(`Invalid Lambda response: ${JSON.stringify(result).slice(0, 500)}`);

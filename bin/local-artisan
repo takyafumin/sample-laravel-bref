@@ -6,10 +6,12 @@ if [ $# -eq 0 ]; then
   echo "usage: $0 \"<artisan command>\"" >&2
   exit 64
 fi
-payload=$(printf '%s' "$*" | sed 's/\\/\\\\/g; s/"/\\"/g')
-response=$(curl -sS "http://127.0.0.1:${ARTISAN_PORT:-9001}/2015-03-31/functions/function/invocations" -d "\"$payload\"")
-if command -v jq >/dev/null 2>&1; then
-  printf '%s' "$response" | jq -r '.output // .'
-  exit "$(printf '%s' "$response" | jq -r '.exitCode // 1')"
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required" >&2
+  exit 69
 fi
-printf '%s\n' "$response"
+payload=$(printf '%s' "$*" | jq -Rs .)
+response=$(curl -sS "http://127.0.0.1:${ARTISAN_PORT:-9001}/2015-03-31/functions/function/invocations" -d "$payload")
+# Success: {"exitCode":0,"output":"..."}; failure: {"errorMessage":"...", ...}
+printf '%s' "$response" | jq -r '.output // .errorMessage // .' 2>/dev/null || printf '%s\n' "$response"
+exit "$(printf '%s' "$response" | jq -r '.exitCode // 1' 2>/dev/null || echo 1)"

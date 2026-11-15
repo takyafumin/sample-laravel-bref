@@ -31,7 +31,9 @@ functions:
         handler: public/index.php
         runtime: php-85-fpm
         timeout: 28 # in seconds (API Gateway has a timeout of 29 seconds)
-        # SQLite does not support concurrent writers over a network file system
+        # SQLite does not handle concurrent writers well on a network file system.
+        # This limits the web function only: run writes via `artisan` (e.g. migrate)
+        # while the app is in maintenance mode.
         reservedConcurrency: 1
         events:
             - httpApi: '*'
@@ -41,6 +43,7 @@ functions:
         handler: artisan
         runtime: php-85-console
         timeout: 720 # in seconds
+        reservedConcurrency: 1
 
 # Environment-specific parameters
 # See https://github.com/oss-serverless/serverless/blob/main/docs/guides/parameters.md

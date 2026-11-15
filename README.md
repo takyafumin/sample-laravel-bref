@@ -24,13 +24,14 @@ bin/local-artisan ──event "<command>"──▶ artisan (:9001, RIE + Bref co
 | `web` | `public/index.php` を Bref FPM ランタイムで実行する（serverless.yml の `web` 関数に相当） |
 | `artisan` | `artisan` を Bref console ランタイムで実行する（serverless.yml の `artisan` 関数に相当） |
 | `gateway` | HTTP リクエストを API Gateway（HTTP API, payload 2.0）のイベントに変換して `web` を呼び出す（[docker/gateway/server.mjs](docker/gateway/server.mjs)） |
-| `serverless` | 最新版 Node.js 上の Serverless Framework（osls）。`tools` プロファイルのため `up` では起動しない |
+| `serverless` | Node.js 26 上の Serverless Framework（osls）。`tools` プロファイルのため `up` では起動しない |
 
 Lambda 上の挙動に近づけるため、次の設定にしている。
 
 - コードは `/var/task` に読み取り専用でマウントする
 - デプロイされない `storage/` と `.env` はコンテナ内で隠す
 - コンテナは Lambda と同じ非 root ユーザー（uid 993）で動かす
+- RIE は同時に1件しか処理できないため、gateway がリクエストを直列化する（web 関数の reservedConcurrency 1 に相当）
 
 ### 起動
 
@@ -47,6 +48,10 @@ php artisan key:generate
 ```
 
 ```bash
+mkdir -p .docker-data/db && chmod 777 .docker-data/db  # Linux: コンテナの uid 993 から書き込めるようにする
+```
+
+```bash
 docker compose up -d
 ```
 
@@ -60,6 +65,13 @@ http://localhost:8000/ を開く。
 
 ```bash
 docker compose logs -f web
+```
+
+パッケージの確認は、本番と同じく dev 依存を除いた状態で行う（終わったら `composer install` で戻す）。
+AWS プロファイルは既定で `takyafumin`。別のプロファイルを使うときは環境変数 `AWS_PROFILE` で上書きする。
+
+```bash
+composer install --no-dev --optimize-autoloader --prefer-dist
 ```
 
 ```bash
