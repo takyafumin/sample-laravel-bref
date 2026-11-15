@@ -41,15 +41,6 @@ provider:
                         - s3files:ClientMount
                         - s3files:ClientWrite
                     Resource: !GetAtt DatabaseFileSystem.FileSystemArn
-                # Direct reads from the bucket (S3 Files optimization)
-                -   Effect: Allow
-                    Action:
-                        - s3:GetObject
-                        - s3:GetObjectVersion
-                    Resource: !Sub '${DatabaseBucket.Arn}/*'
-                -   Effect: Allow
-                    Action: s3:ListBucket
-                    Resource: !GetAtt DatabaseBucket.Arn
 
 functions:
 
@@ -171,8 +162,13 @@ resources:
                         Description: NFS from Lambda functions
 
         # --- Storage: versioned bucket (required by S3 Files) ---
+        # Retained on stack deletion: S3 Files may still export pending writes
+        # while the stack is being deleted. bin/aws-remove empties and deletes it
+        # after `serverless remove`.
         DatabaseBucket:
             Type: AWS::S3::Bucket
+            DeletionPolicy: Retain
+            UpdateReplacePolicy: Retain
             Properties:
                 VersioningConfiguration:
                     Status: Enabled
@@ -301,12 +297,20 @@ resources:
                 FileSystemConfigs:
                     -   Arn: !GetAtt DatabaseAccessPoint.AccessPointArn
                         LocalMountPath: /mnt/db
+                        # Direct S3 reads need network access to S3 (no NAT/endpoint
+                        # here) and bring nothing for a small SQLite file.
+                        S3FilesConfig:
+                            DirectS3Read: DISABLED
         ArtisanLambdaFunction:
             DependsOn: [DatabaseMountTargetA, DatabaseMountTargetC]
             Properties:
                 FileSystemConfigs:
                     -   Arn: !GetAtt DatabaseAccessPoint.AccessPointArn
                         LocalMountPath: /mnt/db
+                        # Direct S3 reads need network access to S3 (no NAT/endpoint
+                        # here) and bring nothing for a small SQLite file.
+                        S3FilesConfig:
+                            DirectS3Read: DISABLED
 
     Outputs:
         DatabaseBucketName:

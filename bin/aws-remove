@@ -1,7 +1,9 @@
 #!/bin/sh
-# Remove a deployed stage. The versioned database bucket must be emptied
-# (all object versions and delete markers) before CloudFormation can delete it.
+# Remove a deployed stage, then empty and delete its database bucket.
+# The bucket is retained by CloudFormation (S3 Files may still export pending
+# writes while the stack is deleted), so it is cleaned up after the stack is gone.
 # Usage: bin/aws-remove [stage]   (default: dev)
+# Requires: aws CLI, jq, docker
 set -eu
 cd "$(dirname "$0")/.."
 stage="${1:-dev}"
@@ -9,18 +11,35 @@ profile="${AWS_PROFILE:-takyafumin}"
 region=ap-northeast-1
 stack="sample-laravel-bref-$stage"
 
-bucket=$(aws cloudformation describe-stacks --profile "$profile" --region "$region" --stack-name "$stack" \
-  --query "Stacks[0].Outputs[?OutputKey=='DatabaseBucketName'].OutputValue" --output text)
-if [ -n "$bucket" ] && [ "$bucket" != "None" ]; then
-  echo "Emptying s3://$bucket (all versions)..."
-  while :; do
-    batch=$(aws s3api list-object-versions --profile "$profile" --region "$region" --bucket "$bucket" --max-items 1000 \
-      --query '{Objects: [Versions, DeleteMarkers][][].{Key: Key, VersionId: VersionId}}' --output json)
-    if [ "$(printf '%s' "$batch" | jq '.Objects | length')" -eq 0 ]; then
-      break
-    fi
-    aws s3api delete-objects --profile "$profile" --region "$region" --bucket "$bucket" \
-      --delete "$(printf '%s' "$batch" | jq -c '. + {Quiet: true}')" >/dev/null
-  done
+if ! bucket=$(aws cloudformation describe-stacks --profile "$profile" --region "$region" --stack-name "$stack" \
+  --query "Stacks[0].Outputs[?OutputKey=='DatabaseBucketName'].OutputValue" --output text 2>/dev/null); then
+  echo "Stack $stack not found (already removed?)." >&2
+  exit 1
 fi
+
+# VPC Lambda network interfaces can take a long time to be released.
 bin/serverless remove --stage "$stage"
+
+if [ -z "$bucket" ] || [ "$bucket" = "None" ]; then
+  exit 0
+fi
+echo "Emptying and deleting s3://$bucket (all versions)..."
+while :; do
+  # --no-paginate: a single ListObjectVersions call returns at most 1000 entries
+  # (versions + delete markers), the limit of DeleteObjects.
+  batch=$(aws s3api list-object-versions --profile "$profile" --region "$region" --bucket "$bucket" --no-paginate \
+    --query '{Objects: [Versions, DeleteMarkers][][].{Key: Key, VersionId: VersionId}}' --output json)
+  if [ "$(printf '%s' "$batch" | jq '.Objects | length')" -eq 0 ]; then
+    break
+  fi
+  result=$(aws s3api delete-objects --profile "$profile" --region "$region" --bucket "$bucket" \
+    --delete "$(printf '%s' "$batch" | jq -c '. + {Quiet: true}')" --output json)
+  # With Quiet, the output is empty on success and lists only failures.
+  if [ -n "$result" ] && ! printf '%s' "$result" | jq -e '(.Errors // []) | length == 0' >/dev/null; then
+    echo "Failed to delete some objects:" >&2
+    printf '%s\n' "$result" | jq '.Errors' >&2
+    exit 1
+  fi
+done
+aws s3api delete-bucket --profile "$profile" --region "$region" --bucket "$bucket"
+echo "Deleted s3://$bucket"
