@@ -104,6 +104,10 @@ SQLite のデータは `.docker-data/db/` に残る。消すときはこのデ�
 
 ## AWS デプロイ（[#2](https://github.com/takyafumin/sample-laravel-bref/issues/2)）
 
+構成の詳細（リソース一覧、IAM、設計判断、制約）は [docs/aws-architecture.md](docs/aws-architecture.md) にまとめている。
+
+![AWS 構成図](docs/architecture.drawio.svg)
+
 ```
 browser ─▶ API Gateway (HTTP API) ─▶ web Lambda ─┐  (VPC, private subnets only)
                                    artisan Lambda ┤
