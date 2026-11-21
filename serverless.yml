@@ -34,7 +34,13 @@ provider:
             - !Ref PrivateSubnetA
             - !Ref PrivateSubnetC
     iam:
+        # CloudFormation creates the resources with this role, not with the
+        # caller's credentials, so the GitHub Actions deploy role stays small.
+        # Created by infra/github-deploy.yml (bin/aws-bootstrap-github-deploy).
+        deploymentRole: ${cf:github-deploy-sample-laravel-bref.CloudFormationRoleArn}
         role:
+            # Required by the deployment role for every role it creates
+            permissionsBoundary: ${cf:github-deploy-sample-laravel-bref.WorkloadBoundaryArn}
             statements:
                 # Mount the S3 file system read-write
                 -   Effect: Allow
@@ -86,6 +92,8 @@ package:
         - '!.docker-data/**'
         - '!docker/**'
         - '!bin/**'
+        - '!infra/**'
+        - '!e2e/**'
         - '!compose.yaml'
         - '!node_modules/**'
         - '!public/storage'
@@ -209,6 +217,7 @@ resources:
         DatabaseFileSystemRole:
             Type: AWS::IAM::Role
             Properties:
+                PermissionsBoundary: ${cf:github-deploy-sample-laravel-bref.WorkloadBoundaryArn}
                 AssumeRolePolicyDocument:
                     Version: '2012-10-17'
                     Statement:

@@ -1,0 +1,78 @@
+#!/bin/sh
+# Deploy a stage and run its pending migrations (used by .github/workflows/deploy.yml).
+# - No stack yet: deploy, then migrate.
+# - The repository has migrations that the deployed database has not run:
+#   deploy in maintenance mode, migrate, then deploy again (see README).
+# - Otherwise: deploy only.
+# If migrating fails, the stage stays in maintenance mode.
+# Usage: bin/aws-release [stage]   (default: dev)
+# Requires: aws CLI, jq, docker, PHP and Composer (bin/deploy)
+set -eu
+cd "$(dirname "$0")/.."
+stage="${1:-dev}"
+region=ap-northeast-1
+stack="sample-laravel-bref-$stage"
+
+# Use the environment's credentials in CI, the profile otherwise.
+aws_() {
+  if [ -n "${AWS_ACCESS_KEY_ID:-}" ]; then
+    aws --region "$region" "$@"
+  else
+    aws --profile "${AWS_PROFILE:-takyafumin}" --region "$region" "$@"
+  fi
+}
+
+artisan() {
+  bin/serverless bref:cli --stage "$stage" --args="$1"
+}
+
+# The first invocation after a deploy can fail with S3FilesMountTimeoutException.
+migrate() {
+  attempt=1
+  until artisan "migrate --force"; do
+    if [ "$attempt" -ge 3 ]; then
+      echo "Migration failed." >&2
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    echo "Retrying the migration in 20 seconds..." >&2
+    sleep 20
+  done
+}
+
+# Prints the repository's migrations that the deployed database has not run.
+# Prints all of them if the status cannot be read (e.g. no database yet).
+pending_migrations() {
+  status=$(artisan "migrate:status" 2>/dev/null) || status=""
+  for file in database/migrations/*.php; do
+    name=$(basename "$file" .php)
+    if ! printf '%s\n' "$status" | grep -E "${name}[ .]+.*Ran" >/dev/null; then
+      echo "$name"
+    fi
+  done
+}
+
+if ! aws_ cloudformation describe-stacks --stack-name "$stack" >/dev/null 2>&1; then
+  echo "==> First deploy of $stack"
+  bin/deploy "$stage"
+  echo "==> Migrating"
+  migrate
+  exit 0
+fi
+
+pending=$(pending_migrations)
+if [ -z "$pending" ]; then
+  echo "==> No pending migrations: deploying $stack"
+  bin/deploy "$stage"
+  exit 0
+fi
+
+echo "==> Pending migrations:"
+# shellcheck disable=SC2086 # one migration per line
+printf "    %s\n" $pending
+echo "==> Deploying $stack in maintenance mode"
+bin/deploy "$stage" --param="maintenance=1"
+echo "==> Migrating"
+migrate
+echo "==> Deploying $stack (maintenance mode off)"
+bin/deploy "$stage"

@@ -1,0 +1,31 @@
+#!/bin/sh
+# Create or update the roles for deploying from GitHub Actions (infra/github-deploy.yml).
+# Run once per AWS account with administrator credentials, before the first deploy
+# (serverless.yml reads the role ARNs from this stack, also for local deploys).
+# Usage: bin/aws-bootstrap-github-deploy
+# Requires: aws CLI
+set -eu
+cd "$(dirname "$0")/.."
+profile="${AWS_PROFILE:-takyafumin}"
+region=ap-northeast-1
+stack=github-deploy-sample-laravel-bref
+provider_url=token.actions.githubusercontent.com
+
+# An account can hold only one OIDC provider per URL: reuse an existing one,
+# unless this stack created it.
+create_provider=false
+if aws cloudformation describe-stack-resource --profile "$profile" --region "$region" \
+  --stack-name "$stack" --logical-resource-id GitHubOidcProvider >/dev/null 2>&1; then
+  create_provider=true
+elif ! aws iam list-open-id-connect-providers --profile "$profile" --output text \
+  --query 'OpenIDConnectProviderList[].Arn' | grep -q "oidc-provider/$provider_url"; then
+  create_provider=true
+fi
+
+aws cloudformation deploy --profile "$profile" --region "$region" \
+  --stack-name "$stack" --template-file infra/github-deploy.yml \
+  --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
+  --parameter-overrides CreateOidcProvider="$create_provider"
+
+aws cloudformation describe-stacks --profile "$profile" --region "$region" --stack-name "$stack" \
+  --query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' --output text
