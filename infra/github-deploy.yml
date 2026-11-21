@@ -99,6 +99,10 @@ Resources:
 
   CloudFormationRole:
     Type: AWS::IAM::Role
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks: [W3037]
     Properties:
       RoleName: github-deploy-sample-laravel-bref-cfn
       Description: Used by CloudFormation to create the sample-laravel-bref app stacks
@@ -117,7 +121,8 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # API Gateway HTTP API
+              # API Gateway HTTP API. TagResource is required when creating a
+              # stage (cfn-lint's action list does not know it: W3037 ignored).
               - Sid: ApiGateway
                 Effect: Allow
                 Action:
@@ -126,6 +131,8 @@ Resources:
                   - apigateway:PUT
                   - apigateway:PATCH
                   - apigateway:DELETE
+                  - apigateway:TagResource
+                  - apigateway:UntagResource
                 Resource:
                   - !Sub arn:aws:apigateway:${AWS::Region}::/apis
                   - !Sub arn:aws:apigateway:${AWS::Region}::/apis/*
@@ -245,6 +252,20 @@ Resources:
                   - s3:PutEncryptionConfiguration
                   - s3:PutLifecycleConfiguration
                 Resource: arn:aws:s3:::sample-laravel-bref-*
+              # Creating an S3 Files file system sets up its EventBridge rules
+              # with the caller's credentials (same as the sync role's grants)
+              - Sid: S3FilesEventRules
+                Effect: Allow
+                Action: events:*
+                Resource: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/DO-NOT-DELETE-S3-Files*
+              - Sid: S3FilesEventRulesRead
+                Effect: Allow
+                Action:
+                  - events:DescribeRule
+                  - events:ListTargetsByRule
+                  - events:ListRuleNamesByTarget
+                  - events:ListRules
+                Resource: '*'
               # S3 Files file system, mount targets and access point
               - Sid: S3Files
                 Effect: Allow
