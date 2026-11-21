@@ -39,6 +39,7 @@ CloudFormation の論理 ID は、serverless.yml の `resources` に書いたも
 | データ | `DatabaseAccessPoint` | S3 Files アクセスポイント | POSIX ユーザー uid/gid 1000、ルートディレクトリ `/lambda`（パーミッション 755） |
 | 権限 | `DatabaseFileSystemRole` | IAM ロール | S3 Files がバケットと同期するために引き受ける |
 | 権限 | `IamRoleLambdaExecution` | IAM ロール | Lambda の実行ロール（osls が生成） |
+| デプロイ | （別スタック `github-deploy-sample-laravel-bref`） | IAM ロール・ポリシー | GitHub Actions 用のロール、CloudFormation 用のロール、permissions boundary。[infra/github-deploy.yml](../infra/github-deploy.yml)、`bin/aws-bootstrap-github-deploy` で作成する（下記「IAM」） |
 | 設定 | （スタック外） | SSM パラメータ | `/sample-laravel-bref/<stage>/app-key`（SecureString）。`bin/aws-put-app-key` で作成する |
 
 ## 3. ネットワーク
@@ -62,8 +63,26 @@ CloudFormation の論理 ID は、serverless.yml の `resources` に書いたも
 | S3 Files 同期ロール | EventBridge ルールの参照（`DescribeRule`、`ListTargetsByRule`） | すべてのルール（`rule/*`） |
 | S3 Files 同期ロール | EventBridge ルールの一覧（`ListRules`、`ListRuleNamesByTarget`） | `*`（ルール単位で絞れるか確認できなかったため。読み取りのみ） |
 
+- Lambda 実行ロールと同期ロールには、permissions boundary（`github-deploy-sample-laravel-bref-workload-boundary`）を付けている（下記「デプロイ用のロール」）。
+
 - 同期ロールの信頼ポリシーは `elasticfilesystem.amazonaws.com` に限り、`aws:SourceAccount` と `aws:SourceArn`（このアカウント・リージョンの S3 Files ファイルシステム）で条件を付けている。
 - `s3files:ClientRootAccess` は付与しない（root としてのアクセスは不要）。
+
+### デプロイ用のロール（[#9](https://github.com/takyafumin/sample-laravel-bref/issues/9)）
+
+アプリのスタックとは別のスタック（`github-deploy-sample-laravel-bref`、[infra/github-deploy.yml](../infra/github-deploy.yml)）で作る。GitHub Actions のロールが自分の権限を広げられないよう、3段に分けている。
+
+| ロール・ポリシー | 信頼する相手 | 許可 |
+|---|---|---|
+| `github-deploy-sample-laravel-bref` | GitHub の OIDC。`aud` が `sts.amazonaws.com`、`sub` が `repo:takyafumin@<owner-id>/sample-laravel-bref@<repo-id>:environment:*` | `sample-laravel-bref-*` スタックの作成・更新と参照（削除は不可）、テンプレートの検証、CloudFormation 用ロールの受け渡し（`iam:PassedToService` が CloudFormation のときだけ）、デプロイ用バケットへのアップロード、APP_KEY の読み取りと復号（SSM 経由のときだけ）、アプリの関数の呼び出し |
+| `github-deploy-sample-laravel-bref-cfn` | `cloudformation.amazonaws.com`（このアカウントから） | `sample-laravel-bref-*` のリソース（API Gateway、Lambda、ロググループ、S3 バケット、IAM ロール）の管理。VPC・サブネット・セキュリティグループと S3 Files は、リソース単位で絞れないためリージョンで絞る。S3 Files の作成時に呼び出し元の権限で設定される EventBridge のルール |
+| `github-deploy-sample-laravel-bref-workload-boundary` | （permissions boundary） | Lambda のログと VPC の ENI、S3 Files のマウント、`sample-laravel-bref-*` バケット、S3 Files の EventBridge ルールだけ |
+
+- **権限昇格を防ぐ仕組み:** CloudFormation 用のロールは、boundary を付けたロールしか作れない（`iam:PermissionsBoundary` の条件）。ロールを渡せる先も Lambda と S3 Files に限る。GitHub Actions のロールは CloudFormation を通してしかリソースを作れないので、作れるロールの権限は boundary が上限になる。
+- **自分自身は変更できない:** 3つのロール・ポリシーとこのスタックの名前は、どのロールが管理できる `sample-laravel-bref-*` にも当てはまらない。
+- **immutable な OIDC subject:** このリポジトリの OIDC の `sub` には、オーナーとリポジトリの ID が入る。リポジトリの名前を変えたり、削除して同じ名前で作り直したりしても一致しない。テンプレートのパラメータ `GitHubSubjectPrefix` には、ワイルドカードを使えない。
+- **environment のジョブだけ:** `sub` が `:environment:` で終わるものだけを信頼するので、environment を指定していないジョブ（たとえば PR の CI）はロールを引き受けられない。
+- **スタックにロールが付く:** `deploymentRole` を指定するとスタックに CloudFormation 用のロールが紐づき、手元からのデプロイや削除も、このロールで行われる。
 
 ## 5. データ（S3 上の SQLite）
 
@@ -107,6 +126,9 @@ SQLite は、ネットワークファイルシステム上で複数のプロセ�
 | Direct S3 Reads を無効にする | S3 への経路がなく、試すたびに失敗してフォールバックする。小さな SQLite には効果もない | S3 の Gateway エンドポイントを追加して有効にする |
 | 同時実行数を 1 にする | SQLite の書き込みの競合を避ける | WAL + busy_timeout（ネットワークファイルシステムでは WAL を使えない） |
 | バケットを `Retain` にする | スタックの削除中にも S3 Files が書き出すことがあり、空にしたバケットが削除できなくなる。`bin/aws-remove` が、スタック削除後に空にして削除する | 削除前に空にする（書き戻しと競合する） |
+| GitHub Actions から OIDC でデプロイする | 長期のアクセスキーを GitHub に置かない。引き受けられるのは、このリポジトリの environment で動くジョブだけ | IAM ユーザーのアクセスキーを Secrets に置く |
+| デプロイの権限を3段に分ける | GitHub Actions のロールが侵害されても、boundary より強いロールを作れない。GitHub Actions のロールには CloudFormation の操作しか許可しない | GitHub Actions のロールに直接すべての権限を付ける（IAM ロールを自由に作れるので、権限昇格できる） |
+| デプロイは手動で実行する | 意図しないデプロイや課金を避ける | main へのマージで自動デプロイ |
 | arm64 を使う | ローカルのランタイムイメージ（`bref/arm-php-85`）と揃える。x86_64 より安い | x86_64 |
 
 ## 8. 制約と既知の問題
@@ -122,6 +144,9 @@ SQLite は、ネットワークファイルシステム上で複数のプロセ�
 | 作業 | コマンド |
 |---|---|
 | APP_KEY を登録する（初回） | `bin/aws-put-app-key dev` |
+| デプロイ用のロールを作る（初回、AWS アカウントごと） | `bin/aws-bootstrap-github-deploy` |
+| デプロイ（GitHub Actions） | Actions → Deploy → Run workflow |
+| デプロイとマイグレーション（手元） | `bin/aws-release dev` |
 | デプロイ | `bin/deploy dev` |
 | 初回のマイグレーション | `bin/serverless bref:cli --stage dev --args="migrate --force"` |
 | 2回目以降のマイグレーション | `bin/deploy dev --param="maintenance=1"` → マイグレーション → `bin/deploy dev` |

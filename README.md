@@ -74,6 +74,7 @@ http://localhost:8000/ を開く。
 | Dockerfile | Hadolint |
 | compose.yaml | `docker compose config` |
 | GitHub Actions | actionlint |
+| CloudFormation（`infra/`） | cfn-lint |
 
 PHP 以外のツールは Docker で動かすため、ホストの Node.js のバージョンには依存しない。
 
@@ -155,10 +156,16 @@ AWS プロファイルは既定で `takyafumin`（SSO）。別のプロファイ
 
 ### デプロイ
 
-ホストに必要なもの: AWS CLI v2、Docker、PHP と Composer（`bin/deploy` と `bin/aws-put-app-key` が使う）、jq（`bin/serverless` と `bin/aws-remove` が使う）。
+ホストに必要なもの: AWS CLI v2、Docker、PHP と Composer（`bin/deploy` と `bin/aws-put-app-key` が使う）、jq（`bin/serverless` と `bin/aws-remove` が使う）、gh（`bin/aws-bootstrap-github-deploy` が使う）。
 
 ```bash
 aws sso login --profile takyafumin
+```
+
+デプロイ用のロールを作る（AWS アカウントごとに1回。詳細は「GitHub Actions からのデプロイ」）。serverless.yml がこのスタックからロールの ARN を読むので、手元からデプロイするときにも必要。
+
+```bash
+bin/aws-bootstrap-github-deploy
 ```
 
 ```bash
@@ -191,13 +198,55 @@ bin/deploy dev
 
 `bin/deploy` は dev 依存を外してからデプロイし、終わると `composer install` で元に戻す。変更がなくても再デプロイしたいときは `bin/deploy dev --force` を使う。Serverless CLI は、ホストのプロファイルから取得した一時的な認証情報を渡して、コンテナで実行する（`bin/serverless`）。
 
+### GitHub Actions からのデプロイ（[#9](https://github.com/takyafumin/sample-laravel-bref/issues/9)）
+
+[.github/workflows/deploy.yml](.github/workflows/deploy.yml) を手動で実行する（Actions → Deploy → Run workflow でステージを選ぶ）。
+
+1. GitHub の OIDC でデプロイ用のロールを引き受ける（長期のアクセスキーは GitHub に置かない）
+2. `bin/aws-release <stage>` でデプロイし、未実行のマイグレーションを流す
+   - スタックがまだない: デプロイ → マイグレーション
+   - 未実行のマイグレーションがある: メンテナンスモードでデプロイ → マイグレーション → 通常のデプロイ（マイグレーションが失敗したらメンテナンスモードのまま止まる）
+   - それ以外: デプロイだけ
+3. デプロイした環境に向けて E2E テスト（`bin/e2e <エンドポイント>`）を実行する。失敗したら Playwright のトレースを artifact に残す
+
+同じステージのデプロイは同時に1つしか走らない（`concurrency`）。手元から同じ手順を実行するときは `bin/aws-release dev` を使う。
+
+#### 初回の準備
+
+| 対象 | 作業 |
+|---|---|
+| AWS | `bin/aws-bootstrap-github-deploy` で [infra/github-deploy.yml](infra/github-deploy.yml) のスタック（`github-deploy-sample-laravel-bref`）を作る。OIDC プロバイダーがアカウントになければ一緒に作る |
+| GitHub | リポジトリに environment（ステージ名。例: `dev`）を作り、environment の変数 `AWS_DEPLOY_ROLE_ARN` にスタックの出力 `GitHubDeployRoleArn` を設定する |
+| SSM | `bin/aws-put-app-key <stage>` で APP_KEY を作る |
+
+```bash
+gh api -X PUT repos/{owner}/{repo}/environments/dev
+```
+
+```bash
+gh variable set AWS_DEPLOY_ROLE_ARN --env dev --body "<GitHubDeployRoleArn>"
+```
+
+#### デプロイ用のロール
+
+権限を3段に分け、GitHub Actions のロールが自分の権限を広げられないようにしている（詳細は [docs/aws-architecture.md](docs/aws-architecture.md) の「IAM」）。
+
+| ロール・ポリシー | 引き受けるもの | できること |
+|---|---|---|
+| `github-deploy-sample-laravel-bref` | GitHub Actions（このリポジトリの environment で動くジョブだけ） | アプリのスタックの作成・更新（削除はできない）、パッケージのアップロード、APP_KEY の読み取り、アプリの関数の呼び出し |
+| `github-deploy-sample-laravel-bref-cfn` | CloudFormation（serverless.yml の `provider.iam.deploymentRole`） | `sample-laravel-bref-*` という名前のリソースの作成・更新・削除 |
+| `github-deploy-sample-laravel-bref-workload-boundary` | （permissions boundary） | CloudFormation が作るロール（Lambda の実行ロール、S3 Files の同期ロール）に必ず付ける上限 |
+
+- 信頼ポリシーは、このリポジトリの immutable な OIDC subject（オーナーとリポジトリの ID を含む `repo:takyafumin@<id>/sample-laravel-bref@<id>:environment:*`）に限っている。リポジトリの名前を変えたり、同じ名前で作り直したりしても一致しない
+- スタックにロールが付いているので、手元からのデプロイと削除（`bin/aws-remove`）も、CloudFormation 用のロールで行われる
+
 ### テンプレートの検証
 
 ```bash
 bin/cfn-lint dev
 ```
 
-`bin/serverless package` で生成した CloudFormation テンプレートを cfn-lint で検証する。SSM の参照を解決するため AWS の認証情報が必要で、`bin/lint`（CI）には含めていない。
+`bin/serverless package` で生成した CloudFormation テンプレートを cfn-lint で検証する。SSM と CloudFormation の参照を解決するため AWS の認証情報が必要で、`bin/lint`（CI）には含めていない。`infra/` のテンプレートは認証情報なしで検証できるので、`bin/lint` で検証している。
 
 ### 検証で分かったこと
 
