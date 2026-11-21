@@ -4,10 +4,15 @@ const baseURL = process.env.E2E_BASE_URL ?? 'http://gateway:8000';
 // A deployed endpoint (API Gateway is always https) can throttle (429/503) or
 // hit a cold start / S3 Files mount timeout, and writes go over NFS.
 const deployed = new URL(baseURL).protocol === 'https:';
-// bin/e2e --video: record every test, slowed down (ms per action) so that the
-// browser can be followed by eye.
+// bin/e2e --video: record every test, slowed down so that the browser can be
+// followed by eye (E2E_SLOW_MO ms per action, 500 unless a valid number).
 const video = process.env.E2E_VIDEO === '1';
-const slowMo = Number(process.env.E2E_SLOW_MO || (video ? 500 : 0));
+const slowMoSetting = Number(process.env.E2E_SLOW_MO);
+const slowMo = !video
+    ? 0
+    : process.env.E2E_SLOW_MO && Number.isFinite(slowMoSetting) && slowMoSetting >= 0
+      ? slowMoSetting
+      : 500;
 
 // E2E tests for the memo app running as a Lambda function.
 // E2E_BASE_URL selects the target: the local gateway (default, see bin/e2e)

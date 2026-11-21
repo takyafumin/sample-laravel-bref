@@ -66,6 +66,10 @@ if [ -z "$base_url" ]; then
   done
 fi
 export E2E_BASE_URL="$base_url"
+# Record videos only with --video, even if E2E_VIDEO is set in the shell.
+E2E_VIDEO=""
+[ "$mode" = video ] && E2E_VIDEO=1
+export E2E_VIDEO
 setup='npm ci --no-audit --no-fund --loglevel=error'
 
 case "$mode" in
@@ -86,7 +90,7 @@ case "$mode" in
     echo "Recording E2E tests against $base_url (videos: e2e/test-results/)"
     rm -rf e2e/test-results
     status=0
-    E2E_VIDEO=1 docker compose run --rm -T e2e \
+    docker compose run --rm -T e2e \
       sh -c "$setup"' && npx playwright test "$@"' sh "$@" || status=$?
     echo "Videos (tests that use a browser):"
     find e2e/test-results -name 'video.webm' | sort | sed 's/^/  /'
