@@ -106,10 +106,15 @@ case "$mode" in
     status=0
     docker compose run --rm -T e2e \
       sh -c "$setup"' && npx playwright test "$@"' sh "$@" || status=$?
-    echo "Videos (tests that use a browser):"
-    # No test-results directory when no test ran: keep the test's exit status.
+    # Only tests that use a browser have a video (E2E-04..06 send HTTP requests
+    # only). Without a test-results directory (no test ran), keep the status.
+    videos=""
     if [ -d e2e/test-results ]; then
-      find e2e/test-results -name 'video.webm' | sort | sed 's/^/  /'
+      videos=$(find e2e/test-results -name 'video.webm' | sort)
+    fi
+    echo "Videos (tests that use a browser):"
+    if [ -n "$videos" ]; then
+      printf '%s\n' "$videos" | sed 's/^/  /'
     else
       echo "  (none)"
     fi
