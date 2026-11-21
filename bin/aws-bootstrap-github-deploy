@@ -3,7 +3,7 @@
 # Run once per AWS account with administrator credentials, before the first deploy
 # (serverless.yml reads the role ARNs from this stack, also for local deploys).
 # Usage: bin/aws-bootstrap-github-deploy
-# Requires: aws CLI
+# Requires: aws CLI (and gh, to read the repository's OIDC subject prefix)
 set -eu
 cd "$(dirname "$0")/.."
 profile="${AWS_PROFILE:-takyafumin}"
@@ -22,10 +22,21 @@ elif ! aws iam list-open-id-connect-providers --profile "$profile" --output text
   create_provider=true
 fi
 
+# OIDC subject prefix of this repository (immutable subject with owner and
+# repository IDs). Override with GITHUB_SUBJECT_PREFIX, or read it with gh.
+subject_prefix="${GITHUB_SUBJECT_PREFIX:-}"
+if [ -z "$subject_prefix" ] && command -v gh >/dev/null 2>&1; then
+  subject_prefix=$(gh api "repos/{owner}/{repo}/actions/oidc/customization/sub" --jq .sub_claim_prefix 2>/dev/null || true)
+fi
+set --
+if [ -n "$subject_prefix" ]; then
+  set -- "GitHubSubjectPrefix=$subject_prefix"
+fi
+
 aws cloudformation deploy --profile "$profile" --region "$region" \
   --stack-name "$stack" --template-file infra/github-deploy.yml \
   --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
-  --parameter-overrides CreateOidcProvider="$create_provider"
+  --parameter-overrides CreateOidcProvider="$create_provider" "$@"
 
 aws cloudformation describe-stacks --profile "$profile" --region "$region" --stack-name "$stack" \
   --query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' --output text

@@ -17,10 +17,16 @@ Description: >-
 # allowed to manage, so the roles cannot modify themselves or this stack.
 
 Parameters:
-  GitHubRepository:
+  GitHubSubjectPrefix:
     Type: String
-    Default: takyafumin/sample-laravel-bref
-    Description: owner/name of the repository whose workflows may assume the deploy role
+    # This repository uses GitHub's immutable OIDC subject (owner and repository
+    # IDs included, so a renamed or recreated repository cannot match). Get it with:
+    #   gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix
+    Default: repo:takyafumin@8556203/sample-laravel-bref@1458494208
+    AllowedPattern: '^repo:[^*?]+$'
+    Description: >-
+      OIDC subject prefix of the repository whose workflows may assume the deploy role
+      (sub_claim_prefix of the repository's OIDC customization; no wildcards)
   CreateOidcProvider:
     Type: String
     AllowedValues: ['true', 'false']
@@ -269,7 +275,7 @@ Resources:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               # Only jobs that run in a GitHub environment of this repository
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepository}:environment:*
+                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:environment:*
       Policies:
         - PolicyName: deploy
           PolicyDocument:
