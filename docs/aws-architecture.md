@@ -95,7 +95,7 @@ CloudFormation の論理 ID は、serverless.yml の `resources` に書いたも
 | 削除を防ぐ仕組みではない | GitHub Actions のロールに `DeleteStack` はないが、テンプレートを更新すればリソースを消せる。DB バケット（`Retain`）の中身も、boundary の範囲（`s3:*`）で消せる | 重要なステージでは environment の承認を必須にする、バケットのバックアップ |
 | API Gateway と S3 Files を名前で絞れていない | 同じリージョンのほかの HTTP API のルートや統合、ほかの S3 Files のファイルシステムも操作できる | リソースタグ（`aws:ResourceTag`）での条件。HTTP API の子リソースや S3 Files でタグ条件が効くかの確認が要る |
 | 作れるロールの信頼先を絞れていない | IAM には信頼ポリシーの中身で絞る条件キーがないので、boundary の範囲を外部のアカウントから使えるロールも作れる | Organizations の SCP で、`sample-laravel-bref-*` ロールの信頼先をサービスに限る |
-| バケットを公開できる | `s3:PutBucketPolicy` と `s3:PutBucketPublicAccessBlock` を許可しているので、テンプレートで DB バケットを公開できる | アカウントレベルの S3 Block Public Access を有効にする |
+| バケットを外部のアカウントと共有できる | `s3:PutBucketPolicy` を許可しているので、テンプレートで DB バケットのポリシーを書き換えられる。一般公開は、アカウントレベルの S3 Block Public Access（有効にしてある）が防ぐ | IAM Access Analyzer で外部アクセスを検知する |
 
 ## 5. データ（S3 上の SQLite）
 

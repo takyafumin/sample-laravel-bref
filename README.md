@@ -218,6 +218,7 @@ bin/deploy dev
 | AWS | `bin/aws-bootstrap-github-deploy` で [infra/github-deploy.yml](infra/github-deploy.yml) のスタック（`github-deploy-sample-laravel-bref`）を作る。OIDC プロバイダーがアカウントになければ一緒に作る |
 | GitHub | リポジトリに environment `dev` を作り、デプロイ対象のブランチを `main` に限る。environment の変数 `AWS_DEPLOY_ROLE_ARN` に、スタックの出力 `GitHubDeployRoleArn` を設定する |
 | SSM | `bin/aws-put-app-key <stage>` で APP_KEY を作る |
+| AWS（推奨） | アカウントレベルの S3 Block Public Access を有効にする（CloudFormation 用のロールはバケットポリシーを変更できるため） |
 
 ```bash
 gh api -X PUT repos/{owner}/{repo}/environments/dev --input - <<<'{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
