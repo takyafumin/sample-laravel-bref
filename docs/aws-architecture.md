@@ -5,6 +5,7 @@ Laravel を Bref で AWS Lambda にデプロイし、データベースには S3
 
 - 定義: [serverless.yml](../serverless.yml)（Serverless Framework / osls + Bref）
 - 手順: [README.md](../README.md) の「AWS デプロイ」
+- GitHub Actions からのデプロイ: [github-actions-deploy.md](github-actions-deploy.md)
 
 ## 1. 構成図
 
@@ -39,6 +40,7 @@ CloudFormation の論理 ID は、serverless.yml の `resources` に書いたも
 | データ | `DatabaseAccessPoint` | S3 Files アクセスポイント | POSIX ユーザー uid/gid 1000、ルートディレクトリ `/lambda`（パーミッション 755） |
 | 権限 | `DatabaseFileSystemRole` | IAM ロール | S3 Files がバケットと同期するために引き受ける |
 | 権限 | `IamRoleLambdaExecution` | IAM ロール | Lambda の実行ロール（osls が生成） |
+| デプロイ | （別スタック `github-deploy-sample-laravel-bref`） | IAM ロール・ポリシー | GitHub Actions 用のロール、CloudFormation 用のロール、permissions boundary。[infra/github-deploy.yml](../infra/github-deploy.yml)、`bin/aws-bootstrap-github-deploy` で作成する（下記「IAM」） |
 | 設定 | （スタック外） | SSM パラメータ | `/sample-laravel-bref/<stage>/app-key`（SecureString）。`bin/aws-put-app-key` で作成する |
 
 ## 3. ネットワーク
@@ -62,8 +64,39 @@ CloudFormation の論理 ID は、serverless.yml の `resources` に書いたも
 | S3 Files 同期ロール | EventBridge ルールの参照（`DescribeRule`、`ListTargetsByRule`） | すべてのルール（`rule/*`） |
 | S3 Files 同期ロール | EventBridge ルールの一覧（`ListRules`、`ListRuleNamesByTarget`） | `*`（ルール単位で絞れるか確認できなかったため。読み取りのみ） |
 
+- Lambda 実行ロールと同期ロールには、permissions boundary（`github-deploy-sample-laravel-bref-workload-boundary`）を付けている（下記「デプロイ用のロール」）。
+
 - 同期ロールの信頼ポリシーは `elasticfilesystem.amazonaws.com` に限り、`aws:SourceAccount` と `aws:SourceArn`（このアカウント・リージョンの S3 Files ファイルシステム）で条件を付けている。
 - `s3files:ClientRootAccess` は付与しない（root としてのアクセスは不要）。
+
+### デプロイ用のロール（[#9](https://github.com/takyafumin/sample-laravel-bref/issues/9)）
+
+アプリのスタックとは別のスタック（`github-deploy-sample-laravel-bref`、[infra/github-deploy.yml](../infra/github-deploy.yml)）で作る。GitHub Actions のロールが自分の権限を広げられないよう、3段に分けている。
+
+| ロール・ポリシー | 信頼する相手 | 許可 |
+|---|---|---|
+| `github-deploy-sample-laravel-bref` | GitHub の OIDC。`aud` が `sts.amazonaws.com`、`sub` が `repo:takyafumin@<owner-id>/sample-laravel-bref@<repo-id>:environment:dev`（完全一致） | そのステージ（`dev`）のスタックの作成・更新と参照（削除は不可）、テンプレートの検証、CloudFormation 用ロールの受け渡し（`iam:PassedToService` が CloudFormation のときだけ）、そのステージのデプロイ用バケットへのアップロード、そのステージの APP_KEY の読み取りと復号（SSM 経由のときだけ）、そのステージの関数の呼び出し |
+| `github-deploy-sample-laravel-bref-cfn` | `cloudformation.amazonaws.com`（このアカウントから） | Lambda、ロググループ、S3 バケット、IAM ロールは `sample-laravel-bref-*` という名前のものだけ。VPC・サブネット・セキュリティグループの変更と削除は、`aws:cloudformation:stack-name` タグが `sample-laravel-bref-*` のものだけ（作成はリージョンで絞る）。API Gateway と S3 Files は、名前やタグで絞れていない（下記「残っているリスク」）。S3 Files の作成時に呼び出し元の権限で設定される EventBridge のルール |
+| `github-deploy-sample-laravel-bref-workload-boundary` | （permissions boundary） | Lambda のログと VPC の ENI、S3 Files のマウント、`sample-laravel-bref-*` バケット、S3 Files の EventBridge ルールだけ |
+
+- **権限昇格を防ぐ仕組み:** CloudFormation 用のロールは、boundary を付けたロールしか作れない（`iam:PermissionsBoundary` の条件）。ロールを渡せる先も Lambda と S3 Files に限る。GitHub Actions のロールは CloudFormation を通してしかリソースを作れないので、作れるロールの権限は boundary が上限になる。
+- **自分自身は変更できない:** 3つのロール・ポリシーとこのスタックの名前は、どのロールが管理できる `sample-laravel-bref-*` にも当てはまらない。
+- **immutable な OIDC subject:** このリポジトリの OIDC の `sub` には、オーナーとリポジトリの ID が入る。リポジトリの名前を変えたり、削除して同じ名前で作り直したりしても一致しない。テンプレートのパラメータ `GitHubSubjectPrefix` には、ワイルドカードを使えない。
+- **1つの environment のジョブだけ:** `sub` を `...:environment:dev` と完全一致で比べる。environment を指定していないジョブ（PR の CI など）や、ほかの environment（Copilot coding agent が使う `copilot` など）のジョブは、ロールを引き受けられない。
+- **environment は main ブランチに限る:** write 権限があれば、どのブランチのワークフローからでも `environment: dev` を指定できる。GitHub 側で `dev` environment のデプロイ対象を main ブランチに限り、レビューを通ったコードだけがデプロイできるようにする（README の初回の準備）。
+- **ステージごとのロール:** GitHub Actions のロールが触れるのは、パラメータ `GitHubEnvironment` のステージだけ。別のステージ（prod など）を GitHub Actions からデプロイするときは、そのステージ用にロールを分ける（今のテンプレートはロールの名前が固定なので、名前にステージを入れる変更が要る）。
+- **スタックにロールが付く:** `deploymentRole` を指定するとスタックに CloudFormation 用のロールが紐づき、手元からのデプロイや削除も、このロールで行われる。そのため `github-deploy-sample-laravel-bref` スタックやロールを先に消すと、アプリのスタックは更新も削除もできなくなる。消すときはアプリのスタックを先に削除する。
+
+#### 残っているリスク
+
+このアカウントには今、このアプリ以外の VPC、HTTP API、S3 Files がないので、次の点は潜在的なリスクとして残している。ほかのワークロードと同じアカウント・リージョンに置くときは、対策を検討する。
+
+| リスク | 内容 | 対策の候補 |
+|---|---|---|
+| 削除を防ぐ仕組みではない | GitHub Actions のロールに `DeleteStack` はないが、テンプレートを更新すればリソースを消せる。DB バケット（`Retain`）の中身も、boundary の範囲（`s3:*`）で消せる | 重要なステージでは environment の承認を必須にする、バケットのバックアップ |
+| API Gateway と S3 Files を名前で絞れていない | 同じリージョンのほかの HTTP API のルートや統合、ほかの S3 Files のファイルシステムも操作できる | リソースタグ（`aws:ResourceTag`）での条件。HTTP API の子リソースや S3 Files でタグ条件が効くかの確認が要る |
+| 作れるロールの信頼先を絞れていない | IAM には信頼ポリシーの中身で絞る条件キーがないので、boundary の範囲を外部のアカウントから使えるロールも作れる | Organizations の SCP で、`sample-laravel-bref-*` ロールの信頼先をサービスに限る |
+| バケットを外部のアカウントと共有できる | `s3:PutBucketPolicy` を許可しているので、テンプレートで DB バケットのポリシーを書き換えられる。一般公開は、アカウントレベルの S3 Block Public Access（有効にしてある）が防ぐ | IAM Access Analyzer で外部アクセスを検知する |
 
 ## 5. データ（S3 上の SQLite）
 
@@ -107,6 +140,9 @@ SQLite は、ネットワークファイルシステム上で複数のプロセ�
 | Direct S3 Reads を無効にする | S3 への経路がなく、試すたびに失敗してフォールバックする。小さな SQLite には効果もない | S3 の Gateway エンドポイントを追加して有効にする |
 | 同時実行数を 1 にする | SQLite の書き込みの競合を避ける | WAL + busy_timeout（ネットワークファイルシステムでは WAL を使えない） |
 | バケットを `Retain` にする | スタックの削除中にも S3 Files が書き出すことがあり、空にしたバケットが削除できなくなる。`bin/aws-remove` が、スタック削除後に空にして削除する | 削除前に空にする（書き戻しと競合する） |
+| GitHub Actions から OIDC でデプロイする | 長期のアクセスキーを GitHub に置かない。引き受けられるのは、このリポジトリの environment で動くジョブだけ | IAM ユーザーのアクセスキーを Secrets に置く |
+| デプロイの権限を3段に分ける | GitHub Actions のロールが侵害されても、boundary より強いロールを作れない。GitHub Actions のロールには CloudFormation の操作しか許可しない | GitHub Actions のロールに直接すべての権限を付ける（IAM ロールを自由に作れるので、権限昇格できる） |
+| デプロイは手動で実行する | 意図しないデプロイや課金を避ける | main へのマージで自動デプロイ |
 | arm64 を使う | ローカルのランタイムイメージ（`bref/arm-php-85`）と揃える。x86_64 より安い | x86_64 |
 
 ## 8. 制約と既知の問題
@@ -122,6 +158,9 @@ SQLite は、ネットワークファイルシステム上で複数のプロセ�
 | 作業 | コマンド |
 |---|---|
 | APP_KEY を登録する（初回） | `bin/aws-put-app-key dev` |
+| デプロイ用のロールを作る（初回、AWS アカウントごと） | `bin/aws-bootstrap-github-deploy` |
+| デプロイ（GitHub Actions） | Actions → Deploy → Run workflow |
+| デプロイとマイグレーション（手元） | `bin/aws-release dev` |
 | デプロイ | `bin/deploy dev` |
 | 初回のマイグレーション | `bin/serverless bref:cli --stage dev --args="migrate --force"` |
 | 2回目以降のマイグレーション | `bin/deploy dev --param="maintenance=1"` → マイグレーション → `bin/deploy dev` |

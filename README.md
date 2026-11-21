@@ -74,6 +74,7 @@ http://localhost:8000/ を開く。
 | Dockerfile | Hadolint |
 | compose.yaml | `docker compose config` |
 | GitHub Actions | actionlint |
+| CloudFormation（`infra/`） | cfn-lint |
 
 PHP 以外のツールは Docker で動かすため、ホストの Node.js のバージョンには依存しない。
 
@@ -155,10 +156,16 @@ AWS プロファイルは既定で `takyafumin`（SSO）。別のプロファイ
 
 ### デプロイ
 
-ホストに必要なもの: AWS CLI v2、Docker、PHP と Composer（`bin/deploy` と `bin/aws-put-app-key` が使う）、jq（`bin/serverless` と `bin/aws-remove` が使う）。
+ホストに必要なもの: AWS CLI v2、Docker、PHP と Composer（`bin/deploy` と `bin/aws-put-app-key` が使う）、jq（`bin/serverless` と `bin/aws-remove` が使う）、gh（`bin/aws-bootstrap-github-deploy` が使う）。
 
 ```bash
 aws sso login --profile takyafumin
+```
+
+デプロイ用のロールを作る（AWS アカウントごとに1回。詳細は「GitHub Actions からのデプロイ」）。serverless.yml がこのスタックからロールの ARN を読むので、手元からデプロイするときにも必要。
+
+```bash
+bin/aws-bootstrap-github-deploy
 ```
 
 ```bash
@@ -191,13 +198,27 @@ bin/deploy dev
 
 `bin/deploy` は dev 依存を外してからデプロイし、終わると `composer install` で元に戻す。変更がなくても再デプロイしたいときは `bin/deploy dev --force` を使う。Serverless CLI は、ホストのプロファイルから取得した一時的な認証情報を渡して、コンテナで実行する（`bin/serverless`）。
 
+### GitHub Actions からのデプロイ（[#9](https://github.com/takyafumin/sample-laravel-bref/issues/9)）
+
+手順書: [docs/github-actions-deploy.md](docs/github-actions-deploy.md)（仕組みの図、初回の準備、権限の設計、うまくいかないときの対応）
+
+![GitHub Actions からのデプロイ](docs/github-deploy.drawio.svg)
+
+Actions → **Deploy** → **Run workflow** で、ステージを選んで実行する（main ブランチからだけ）。
+
+1. GitHub の OIDC でデプロイ用のロールを引き受ける（長期のアクセスキーは GitHub に置かない）
+2. `bin/aws-release <stage>` でデプロイし、未実行のマイグレーションを流す（未実行のものがあるときはメンテナンスモードで）
+3. デプロイした環境に向けて E2E テスト（`bin/e2e <エンドポイント>`）を実行する
+
+初回は、AWS のデプロイ用ロール（`bin/aws-bootstrap-github-deploy`）、GitHub の environment `dev` と変数 `AWS_DEPLOY_ROLE_ARN`、APP_KEY の準備が要る（手順書の「初回の準備」）。手元から同じ手順を実行するときは `bin/aws-release dev` を使う。
+
 ### テンプレートの検証
 
 ```bash
 bin/cfn-lint dev
 ```
 
-`bin/serverless package` で生成した CloudFormation テンプレートを cfn-lint で検証する。SSM の参照を解決するため AWS の認証情報が必要で、`bin/lint`（CI）には含めていない。
+`bin/serverless package` で生成した CloudFormation テンプレートを cfn-lint で検証する。SSM と CloudFormation の参照を解決するため AWS の認証情報が必要で、`bin/lint`（CI）には含めていない。`infra/` のテンプレートは認証情報なしで検証できるので、`bin/lint` で検証している。
 
 ### 検証で分かったこと
 

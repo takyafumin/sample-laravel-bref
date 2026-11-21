@@ -1,0 +1,89 @@
+name: Deploy
+
+# Manual only: Actions > Deploy > Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Stage to deploy
+        type: choice
+        options: [dev]
+        default: dev
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for assuming the AWS deploy role
+
+# Never run two deploys of the same stage at once (CloudFormation and SQLite).
+concurrency:
+  group: deploy-${{ inputs.stage || 'dev' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The deploy role trusts only jobs that run in a GitHub environment of this
+    # repository. AWS_DEPLOY_ROLE_ARN is a variable of that environment.
+    env:
+      STAGE: ${{ inputs.stage || 'dev' }}
+    environment:
+      name: ${{ inputs.stage || 'dev' }}
+      url: ${{ steps.endpoint.outputs.url }}
+    steps:
+      # This job can get an AWS OIDC token (id-token: write): every action is
+      # pinned to a commit SHA, not a movable tag.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.5'
+          tools: composer:v2
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      # compose.yaml (used by bin/serverless and bin/e2e) requires APP_KEY in .env.
+      # .env is not deployed (serverless.yml package.patterns); the stage's
+      # APP_KEY comes from SSM.
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-northeast-1
+
+      - name: Deploy and migrate
+        run: bin/aws-release "$STAGE"
+
+      - name: Get the endpoint
+        id: endpoint
+        run: |
+          url=$(aws cloudformation describe-stacks --stack-name "sample-laravel-bref-$STAGE" \
+            --query "Stacks[0].Outputs[?OutputKey=='HttpApiUrl'].OutputValue" --output text)
+          # Without a URL, bin/e2e would test a local stack and pass.
+          case "$url" in
+            https://*) ;;
+            *)
+              echo "::error::No HttpApiUrl output on sample-laravel-bref-$STAGE (got: '$url')"
+              exit 1
+              ;;
+          esac
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: E2E tests against the deployed stage
+        env:
+          ENDPOINT: ${{ steps.endpoint.outputs.url }}
+        run: bin/e2e "$ENDPOINT"
+
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-test-results
+          path: e2e/test-results/
+          if-no-files-found: ignore

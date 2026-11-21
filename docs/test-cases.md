@@ -67,7 +67,7 @@ E2E-02 が通ると、次がまとめて動いていることになる。
 | メンテナンスモード（`MAINTENANCE_MODE`）で 503 になること | パラメータを変えて再デプロイする必要がある。#2 で手動確認 |
 | 同時実行数 1 によるスロットリング（429/503） | 同時にリクエストを送る負荷のテストは行っていない |
 | artisan 関数（マイグレーションなど） | `bin/e2e` がローカルで `migrate` を流すので、起動できることは間接的に確認している |
-| https のときの URL の生成（`https://` のリダイレクト） | ローカルは http。AWS に向けて E2E を実行したときだけ確認される |
+| https のときの URL の生成（`https://` のリダイレクト） | ローカルは http。AWS に向けて E2E を実行したとき（`deploy` ワークフロー）だけ確認される |
 | ネットワークの分離、IAM の最小権限 | インフラの設定。cfn-lint（`bin/cfn-lint`）と #2 の手動確認で扱う |
 | 見た目（レイアウト、スタイル） | 文言と要素の有無だけを確認している |
 | 日本語などのマルチバイト文字の保存 | テストの本文は ASCII のみ |
@@ -76,7 +76,8 @@ E2E-02 が通ると、次がまとめて動いていることになる。
 
 | ジョブ | ランナー | 内容 |
 |---|---|---|
-| `lint-and-test` | `ubuntu-latest` | `bin/lint`（gitleaks、Pint、Larastan、Prettier、ShellCheck、Hadolint、compose、actionlint）と Feature テスト |
+| `lint-and-test` | `ubuntu-latest` | `bin/lint`（gitleaks、Pint、Larastan、Prettier、ShellCheck、Hadolint、compose、cfn-lint（`infra/`）、actionlint）と Feature テスト |
 | `e2e` | `ubuntu-24.04-arm` | ローカルのスタック（`bref/arm-php-85` は arm64）を起動して E2E テスト。失敗時はコンテナのログとトレースを残す |
+| `deploy`（手動で実行） | `ubuntu-latest` | ステージにデプロイし、未実行のマイグレーションを流してから、デプロイした環境に向けて E2E テスト（[#9](https://github.com/takyafumin/sample-laravel-bref/issues/9)）。失敗時はトレースを残す |
 
-デプロイした AWS 環境に向けた E2E テストは、今は CI では実行しない。デプロイ後に手元で `bin/e2e <URL>` を実行する。GitHub Actions からのデプロイと、そのあとの E2E は [#9](https://github.com/takyafumin/sample-laravel-bref/issues/9) で扱う。
+PR や main への push では、デプロイした AWS 環境に向けた E2E テストは実行しない。`deploy` ワークフローを手動で実行したときか、手元で `bin/e2e <URL>` を実行したときだけ。
