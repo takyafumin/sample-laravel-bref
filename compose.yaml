@@ -88,6 +88,9 @@ services:
       CI: ${CI:-}
       NPM_CONFIG_UPDATE_NOTIFIER: "false"
       E2E_BASE_URL: ${E2E_BASE_URL:-http://gateway:8000}
+      # bin/e2e --video
+      E2E_VIDEO: ${E2E_VIDEO:-}
+      E2E_SLOW_MO: ${E2E_SLOW_MO:-}
     # Chromium needs more shared memory than Docker's 64 MB default.
     shm_size: 1gb
     volumes:
