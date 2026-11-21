@@ -2,6 +2,8 @@ name: Deploy
 
 # Manual only: Actions > Deploy > Run workflow.
 on:
+  push: # TEMPORARY: test the workflow before it is on main
+    branches: [feature/9-aws-deploy-ci]
   workflow_dispatch:
     inputs:
       stage:
