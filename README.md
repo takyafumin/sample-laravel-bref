@@ -69,7 +69,7 @@ http://localhost:8000/ を開く。
 |---|---|
 | クレデンシャル混入 | gitleaks（コミット履歴、未コミットの変更、ステージ済みの変更） |
 | PHP | Pint（フォーマット）、Larastan / PHPStan level max（静的解析） |
-| JavaScript | Prettier |
+| JavaScript / TypeScript（gateway、E2E テスト） | Prettier |
 | シェルスクリプト | ShellCheck |
 | Dockerfile | Hadolint |
 | compose.yaml | `docker compose config` |
@@ -88,6 +88,36 @@ composer lint:fix
 ```bash
 php artisan test
 ```
+
+### E2E テスト（[#7](https://github.com/takyafumin/sample-laravel-bref/issues/7)）
+
+[Playwright](https://playwright.dev/) でブラウザを動かし、Lambda として動いているアプリを外側から確認する（[e2e/](e2e/)）。Playwright は公式のコンテナイメージ（`mcr.microsoft.com/playwright`）で動かすので、ホストに Node.js は要らない。
+
+各テストケースが何を確認しているか、自動テストで確認していないことは何かは、[docs/test-cases.md](docs/test-cases.md) にまとめている（Feature テストも含む）。
+
+ローカルのスタック（`docker compose up -d` とマイグレーション）を起動してからテストする。
+
+```bash
+bin/e2e
+```
+
+デプロイした AWS 環境に向けて実行するときは、API Gateway のエンドポイントを渡す。
+
+```bash
+bin/e2e https://xxxxxxxxxx.execute-api.ap-northeast-1.amazonaws.com
+```
+
+`--` のあとに Playwright のオプションを渡せる。
+
+```bash
+bin/e2e -- --grep CSRF
+```
+
+- 失敗したテストのトレースは `e2e/test-results/` に残る（CI では artifact としてアップロードする）。`npx playwright show-trace` や https://trace.playwright.dev/ で開ける
+- https の URL（デプロイした環境）に向けたときは、スロットリングやコールドスタートに備えて、リトライを2回にし、expect のタイムアウトを15秒に延ばす
+- テストは1ワーカーで順番に実行する（web 関数の `reservedConcurrency: 1` と、ローカルの RIE が同時に1件しか処理できないことに合わせている）
+- AWS の DB は共有なので、テストで作るメモは一意な本文にして、同じテストの中で削除する。テストが途中で失敗すると、`e2e ` で始まるメモが残ることがある
+- CI では `e2e` ジョブが arm64 のランナー（`ubuntu-24.04-arm`）でローカルのスタックを起動して実行する
 
 ### その他
 

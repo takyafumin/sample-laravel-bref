@@ -15,8 +15,8 @@ SHELLCHECK_IMAGE=koalaman/shellcheck:v0.11.0
 HADOLINT_IMAGE=hadolint/hadolint:v2.14.0
 ACTIONLINT_IMAGE=rhysd/actionlint:1.7.8
 GITLEAKS_IMAGE=zricethezav/gitleaks:v8.30.1
-JS_FILES="docker/gateway/server.mjs"
-SHELL_FILES="bin/lint bin/local-artisan bin/serverless bin/aws-put-app-key bin/deploy bin/aws-remove bin/cfn-lint"
+JS_FILES="docker/gateway/server.mjs e2e/playwright.config.ts e2e/tests/*.spec.ts e2e/package.json"
+SHELL_FILES="bin/lint bin/local-artisan bin/serverless bin/aws-put-app-key bin/deploy bin/aws-remove bin/cfn-lint bin/e2e"
 
 status=0
 run() {
@@ -53,7 +53,7 @@ run "gitleaks (secrets in staged changes)" gitleaks --pre-commit --staged
 run "Pint (PHP format)" vendor/bin/pint --test
 run "Larastan (PHP static analysis)" vendor/bin/phpstan analyse --no-progress --memory-limit=1G
 # shellcheck disable=SC2086
-run "Prettier (JS format)" prettier --check $JS_FILES
+run "Prettier (JS/TS/JSON format)" prettier --check $JS_FILES
 # shellcheck disable=SC2086
 run "ShellCheck" docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" $SHELL_FILES
 for dockerfile in docker/*/Dockerfile; do
