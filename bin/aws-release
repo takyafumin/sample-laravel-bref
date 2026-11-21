@@ -44,9 +44,17 @@ migrate() {
 # Prints the repository's migrations that the deployed database has not run.
 # Prints all of them if the status cannot be read (e.g. no database yet).
 pending_migrations() {
-  # bref:cli prints the invocation result as JSON ({"exitCode":..,"output":".."}),
-  # then the function's logs after a line of dashes.
-  status=$(artisan "migrate:status" 2>/dev/null | sed '/^-\{10,\}/,$d' | jq -r '.output // empty' 2>/dev/null) || status=""
+  # bref:cli prints the invocation result as indented JSON, from a line "{" to a
+  # line "}" ({"exitCode":..,"output":".."}), then the function's logs. Parse
+  # only that block, so that other output (e.g. docker) cannot break it.
+  raw=$(artisan "migrate:status" 2>&1) || true
+  status=$(printf '%s\n' "$raw" | awk '/^\{$/ { found = 1 } found { print } found && /^\}$/ { exit }' | jq -r '.output // empty' 2>/dev/null) || status=""
+  if [ -z "$status" ]; then
+    {
+      echo "warning: could not read the migration status; treating every migration as pending."
+      printf '%s\n' "$raw" | sed 's/^/    /'
+    } >&2
+  fi
   for file in database/migrations/*.php; do
     name=$(basename "$file" .php)
     # One line per migration: "  <name> ........ [<batch>] Ran"
