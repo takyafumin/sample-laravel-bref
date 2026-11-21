@@ -5,6 +5,7 @@ Laravel を Bref で AWS Lambda にデプロイし、データベースには S3
 
 - 定義: [serverless.yml](../serverless.yml)（Serverless Framework / osls + Bref）
 - 手順: [README.md](../README.md) の「AWS デプロイ」
+- GitHub Actions からのデプロイ: [github-actions-deploy.md](github-actions-deploy.md)
 
 ## 1. 構成図
 
