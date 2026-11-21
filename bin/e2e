@@ -50,6 +50,21 @@ if [ $# -gt 0 ]; then
   shift
 fi
 
+# Check the UI port before starting anything.
+port="${E2E_UI_PORT:-9323}"
+if [ "$mode" = ui ]; then
+  case "$port" in
+    '' | *[!0-9]*)
+      echo "E2E_UI_PORT must be a port number (got: $port)." >&2
+      exit 64
+      ;;
+  esac
+  if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    echo "E2E_UI_PORT must be between 1 and 65535 (got: $port)." >&2
+    exit 64
+  fi
+fi
+
 if [ -z "$base_url" ]; then
   base_url="http://gateway:8000"
   docker compose up -d web artisan gateway
@@ -74,7 +89,6 @@ setup='npm ci --no-audit --no-fund --loglevel=error'
 
 case "$mode" in
   ui)
-    port="${E2E_UI_PORT:-9323}"
     echo "Playwright UI mode for $base_url: open http://127.0.0.1:$port/ in your browser (Ctrl+C to stop)"
     # The UI listens on all interfaces inside the container, but is published on
     # the host's loopback only.
@@ -93,7 +107,12 @@ case "$mode" in
     docker compose run --rm -T e2e \
       sh -c "$setup"' && npx playwright test "$@"' sh "$@" || status=$?
     echo "Videos (tests that use a browser):"
-    find e2e/test-results -name 'video.webm' | sort | sed 's/^/  /'
+    # No test-results directory when no test ran: keep the test's exit status.
+    if [ -d e2e/test-results ]; then
+      find e2e/test-results -name 'video.webm' | sort | sed 's/^/  /'
+    else
+      echo "  (none)"
+    fi
     exit "$status"
     ;;
   *)
