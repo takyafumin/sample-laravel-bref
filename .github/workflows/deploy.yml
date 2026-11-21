@@ -44,6 +44,14 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
 
+      # compose.yaml (used by bin/serverless and bin/e2e) requires APP_KEY in .env.
+      # .env is not deployed (serverless.yml package.patterns); the stage's
+      # APP_KEY comes from SSM.
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
