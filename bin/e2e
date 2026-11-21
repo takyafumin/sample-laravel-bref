@@ -1,11 +1,37 @@
 #!/bin/sh
 # Run the Playwright E2E tests (e2e/) in a container.
-# Usage: bin/e2e                 start the local stack (docker compose) and test it
-#        bin/e2e <base-url>      test a deployed endpoint, e.g. the API Gateway URL
-#        bin/e2e [<base-url>] -- <playwright test options...>
+# Usage: bin/e2e [--ui | --video] [<base-url>] [-- <playwright test options...>]
+#   (no URL)     start the local stack (docker compose) and test it
+#   <base-url>   test a deployed endpoint, e.g. the API Gateway URL
+#   --video      record every test as a video, slowed down to follow by eye
+#                (e2e/test-results/**/video.webm; E2E_SLOW_MO=<ms>, default 500)
+#   --ui         open Playwright's UI mode at http://127.0.0.1:9323 (E2E_UI_PORT)
+#                to run tests and see the browser at every step; Ctrl+C to stop
 # Requires: docker (and jq for the local stack, via bin/local-artisan)
 set -eu
 cd "$(dirname "$0")/.."
+
+usage() {
+  echo "usage: $0 [--ui | --video] [<base-url>] [-- <playwright test options...>]" >&2
+  exit 64
+}
+
+mode="test"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --ui)
+      [ "$mode" = test ] || usage
+      mode=ui
+      shift
+      ;;
+    --video)
+      [ "$mode" = test ] || usage
+      mode=video
+      shift
+      ;;
+    *) break ;;
+  esac
+done
 
 base_url=""
 case "${1:-}" in
@@ -15,17 +41,28 @@ case "${1:-}" in
     ;;
   "" | --) ;;
   *)
-    echo "usage: $0 [<base-url>] [-- <playwright test options...>]" >&2
     echo "The base URL must start with http:// or https:// (got: $1)." >&2
-    exit 64
+    usage
     ;;
 esac
 if [ $# -gt 0 ]; then
-  if [ "$1" != "--" ]; then
-    echo "usage: $0 [<base-url>] [-- <playwright test options...>]" >&2
+  [ "$1" = "--" ] || usage
+  shift
+fi
+
+# Check the UI port before starting anything.
+port="${E2E_UI_PORT:-9323}"
+if [ "$mode" = ui ]; then
+  case "$port" in
+    '' | *[!0-9]*)
+      echo "E2E_UI_PORT must be a port number (got: $port)." >&2
+      exit 64
+      ;;
+  esac
+  if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    echo "E2E_UI_PORT must be between 1 and 65535 (got: $port)." >&2
     exit 64
   fi
-  shift
 fi
 
 if [ -z "$base_url" ]; then
@@ -43,8 +80,50 @@ if [ -z "$base_url" ]; then
     sleep 2
   done
 fi
+export E2E_BASE_URL="$base_url"
+# Record videos only with --video, even if E2E_VIDEO is set in the shell.
+E2E_VIDEO=""
+[ "$mode" = video ] && E2E_VIDEO=1
+export E2E_VIDEO
+setup='npm ci --no-audit --no-fund --loglevel=error'
 
-echo "Running E2E tests against $base_url (traces of failed tests: e2e/test-results/)"
-rm -rf e2e/test-results
-E2E_BASE_URL="$base_url" exec docker compose run --rm -T e2e \
-  sh -c 'npm ci --no-audit --no-fund --loglevel=error && npx playwright test "$@"' sh "$@"
+case "$mode" in
+  ui)
+    echo "Playwright UI mode for $base_url: open http://127.0.0.1:$port/ in your browser (Ctrl+C to stop)"
+    # The UI listens on all interfaces inside the container, but is published on
+    # the host's loopback only.
+    tty="-T"
+    if [ -t 0 ] && [ -t 1 ]; then
+      tty=""
+    fi
+    # shellcheck disable=SC2086 # $tty is empty or a single flag
+    exec docker compose run --rm $tty -p "127.0.0.1:$port:9323" e2e \
+      sh -c "$setup"' && npx playwright test --ui-host=0.0.0.0 --ui-port=9323 "$@"' sh "$@"
+    ;;
+  video)
+    echo "Recording E2E tests against $base_url (videos: e2e/test-results/)"
+    rm -rf e2e/test-results
+    status=0
+    docker compose run --rm -T e2e \
+      sh -c "$setup"' && npx playwright test "$@"' sh "$@" || status=$?
+    # Only tests that use a browser have a video (E2E-04..06 send HTTP requests
+    # only). Without a test-results directory (no test ran), keep the status.
+    videos=""
+    if [ -d e2e/test-results ]; then
+      videos=$(find e2e/test-results -name 'video.webm' | sort)
+    fi
+    echo "Videos (tests that use a browser):"
+    if [ -n "$videos" ]; then
+      printf '%s\n' "$videos" | sed 's/^/  /'
+    else
+      echo "  (none)"
+    fi
+    exit "$status"
+    ;;
+  *)
+    echo "Running E2E tests against $base_url (traces of failed tests: e2e/test-results/)"
+    rm -rf e2e/test-results
+    exec docker compose run --rm -T e2e \
+      sh -c "$setup"' && npx playwright test "$@"' sh "$@"
+    ;;
+esac
