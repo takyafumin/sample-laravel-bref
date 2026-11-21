@@ -35,6 +35,14 @@ Parameters:
       Create the token.actions.githubusercontent.com OIDC provider. Use false when the
       account already has it (an account can hold only one per URL).
 
+  GitHubEnvironment:
+    Type: String
+    Default: dev
+    AllowedPattern: '^[a-z0-9-]+$'
+    Description: >-
+      GitHub environment (= stage) whose jobs may assume the deploy role. The deploy
+      role can only touch that stage's stack, package bucket, APP_KEY and functions.
+
 Conditions:
   CreateOidcProvider: !Equals [!Ref CreateOidcProvider, 'true']
 
@@ -87,7 +95,7 @@ Resources:
           - Sid: S3FilesEventRules
             Effect: Allow
             Action: events:*
-            Resource: !Sub arn:aws:events:*:${AWS::AccountId}:rule/DO-NOT-DELETE-S3-Files*
+            Resource: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/DO-NOT-DELETE-S3-Files*
           - Sid: S3FilesEventRulesRead
             Effect: Allow
             Action:
@@ -137,25 +145,15 @@ Resources:
                   - !Sub arn:aws:apigateway:${AWS::Region}::/apis
                   - !Sub arn:aws:apigateway:${AWS::Region}::/apis/*
                   - !Sub arn:aws:apigateway:${AWS::Region}::/tags/*
-              # VPC, subnets and security groups. Most EC2 actions do not support
-              # resource-level permissions for create, so limit them by region.
-              - Sid: Network
+              # VPC, subnets and security groups. Creating them cannot be limited
+              # by name, so limit by region.
+              - Sid: NetworkCreate
                 Effect: Allow
                 Action:
                   - ec2:CreateVpc
-                  - ec2:DeleteVpc
-                  - ec2:ModifyVpcAttribute
                   - ec2:CreateSubnet
-                  - ec2:DeleteSubnet
-                  - ec2:ModifySubnetAttribute
                   - ec2:CreateSecurityGroup
-                  - ec2:DeleteSecurityGroup
-                  - ec2:AuthorizeSecurityGroupIngress
-                  - ec2:AuthorizeSecurityGroupEgress
-                  - ec2:RevokeSecurityGroupIngress
-                  - ec2:RevokeSecurityGroupEgress
                   - ec2:CreateTags
-                  - ec2:DeleteTags
                   - ec2:Describe*
                   - ec2:CreateNetworkInterface
                   - ec2:DeleteNetworkInterface
@@ -164,6 +162,27 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:RequestedRegion: !Ref AWS::Region
+              # Changing or deleting them: only resources of the app stacks, by the
+              # aws:cloudformation:stack-name tag (aws: tags cannot be set by users).
+              - Sid: NetworkChange
+                Effect: Allow
+                Action:
+                  - ec2:DeleteVpc
+                  - ec2:ModifyVpcAttribute
+                  - ec2:DeleteSubnet
+                  - ec2:ModifySubnetAttribute
+                  - ec2:DeleteSecurityGroup
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:DeleteTags
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref AWS::Region
+                  StringLike:
+                    aws:ResourceTag/aws:cloudformation:stack-name: sample-laravel-bref-*
               # Roles of the app stack must carry the workload boundary
               - Sid: AppRolesWithBoundary
                 Effect: Allow
@@ -294,15 +313,16 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-              # Only jobs that run in a GitHub environment of this repository
-              StringLike:
-                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:environment:*
+                # Only jobs that run in this environment of this repository.
+                # Restrict the environment to the main branch in GitHub (README).
+                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:environment:${GitHubEnvironment}
       Policies:
         - PolicyName: deploy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Create and update the app stacks (not delete: removal stays manual)
+              # Create and update the stage's stack. No DeleteStack, but an update can
+              # still remove resources: this is not a guard against destructive changes.
               - Sid: AppStacks
                 Effect: Allow
                 Action:
@@ -318,7 +338,7 @@ Resources:
                   - cloudformation:DescribeStackResources
                   - cloudformation:ListStackResources
                   - cloudformation:GetTemplate
-                Resource: !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sample-laravel-bref-*/*
+                Resource: !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sample-laravel-bref-${GitHubEnvironment}/*
               # serverless.yml reads the role ARNs from this stack (${cf:...})
               - Sid: ReadThisStack
                 Effect: Allow
@@ -345,13 +365,13 @@ Resources:
                   - s3:PutObject
                   - s3:DeleteObject
                 Resource:
-                  - arn:aws:s3:::sample-laravel-bref-*-serverlessdeploymentbuck*
-                  - arn:aws:s3:::sample-laravel-bref-*-serverlessdeploymentbuck*/*
+                  - !Sub arn:aws:s3:::sample-laravel-bref-${GitHubEnvironment}-serverlessdeploymentbuck*
+                  - !Sub arn:aws:s3:::sample-laravel-bref-${GitHubEnvironment}-serverlessdeploymentbuck*/*
               # APP_KEY is resolved at deploy time
               - Sid: AppKey
                 Effect: Allow
                 Action: ssm:GetParameter
-                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sample-laravel-bref/*/app-key
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sample-laravel-bref/${GitHubEnvironment}/app-key
               - Sid: DecryptAppKey
                 Effect: Allow
                 Action: kms:Decrypt
@@ -365,7 +385,7 @@ Resources:
                 Action:
                   - lambda:InvokeFunction
                   - lambda:GetFunction
-                Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:sample-laravel-bref-*
+                Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:sample-laravel-bref-${GitHubEnvironment}-*
 
 Outputs:
   GitHubDeployRoleArn:

@@ -1,13 +1,14 @@
 #!/bin/sh
 # Run the Serverless Framework (osls) container with temporary AWS credentials
 # exported from a host profile (works with SSO: run `aws sso login` first), or
-# with the credentials already in the environment (CI, e.g.
-# aws-actions/configure-aws-credentials).
+# in GitHub Actions, with the credentials already in the environment
+# (aws-actions/configure-aws-credentials). Locally the profile is always used,
+# like the other bin/aws-* scripts, even if AWS_* variables are set.
 # Usage: bin/serverless <serverless args...>
 # Requires: aws CLI v2, jq, docker
 set -eu
 cd "$(dirname "$0")/.."
-if [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
+if [ "${GITHUB_ACTIONS:-}" != true ]; then
   profile="${AWS_PROFILE:-takyafumin}"
   if ! creds=$(aws configure export-credentials --profile "$profile" --format process); then
     echo "Could not get AWS credentials for profile '$profile' (try: aws sso login --profile $profile)" >&2

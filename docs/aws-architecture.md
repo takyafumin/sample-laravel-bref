@@ -74,15 +74,28 @@ CloudFormation の論理 ID は、serverless.yml の `resources` に書いたも
 
 | ロール・ポリシー | 信頼する相手 | 許可 |
 |---|---|---|
-| `github-deploy-sample-laravel-bref` | GitHub の OIDC。`aud` が `sts.amazonaws.com`、`sub` が `repo:takyafumin@<owner-id>/sample-laravel-bref@<repo-id>:environment:*` | `sample-laravel-bref-*` スタックの作成・更新と参照（削除は不可）、テンプレートの検証、CloudFormation 用ロールの受け渡し（`iam:PassedToService` が CloudFormation のときだけ）、デプロイ用バケットへのアップロード、APP_KEY の読み取りと復号（SSM 経由のときだけ）、アプリの関数の呼び出し |
-| `github-deploy-sample-laravel-bref-cfn` | `cloudformation.amazonaws.com`（このアカウントから） | `sample-laravel-bref-*` のリソース（API Gateway、Lambda、ロググループ、S3 バケット、IAM ロール）の管理。VPC・サブネット・セキュリティグループと S3 Files は、リソース単位で絞れないためリージョンで絞る。S3 Files の作成時に呼び出し元の権限で設定される EventBridge のルール |
+| `github-deploy-sample-laravel-bref` | GitHub の OIDC。`aud` が `sts.amazonaws.com`、`sub` が `repo:takyafumin@<owner-id>/sample-laravel-bref@<repo-id>:environment:dev`（完全一致） | そのステージ（`dev`）のスタックの作成・更新と参照（削除は不可）、テンプレートの検証、CloudFormation 用ロールの受け渡し（`iam:PassedToService` が CloudFormation のときだけ）、そのステージのデプロイ用バケットへのアップロード、そのステージの APP_KEY の読み取りと復号（SSM 経由のときだけ）、そのステージの関数の呼び出し |
+| `github-deploy-sample-laravel-bref-cfn` | `cloudformation.amazonaws.com`（このアカウントから） | Lambda、ロググループ、S3 バケット、IAM ロールは `sample-laravel-bref-*` という名前のものだけ。VPC・サブネット・セキュリティグループの変更と削除は、`aws:cloudformation:stack-name` タグが `sample-laravel-bref-*` のものだけ（作成はリージョンで絞る）。API Gateway と S3 Files は、名前やタグで絞れていない（下記「残っているリスク」）。S3 Files の作成時に呼び出し元の権限で設定される EventBridge のルール |
 | `github-deploy-sample-laravel-bref-workload-boundary` | （permissions boundary） | Lambda のログと VPC の ENI、S3 Files のマウント、`sample-laravel-bref-*` バケット、S3 Files の EventBridge ルールだけ |
 
 - **権限昇格を防ぐ仕組み:** CloudFormation 用のロールは、boundary を付けたロールしか作れない（`iam:PermissionsBoundary` の条件）。ロールを渡せる先も Lambda と S3 Files に限る。GitHub Actions のロールは CloudFormation を通してしかリソースを作れないので、作れるロールの権限は boundary が上限になる。
 - **自分自身は変更できない:** 3つのロール・ポリシーとこのスタックの名前は、どのロールが管理できる `sample-laravel-bref-*` にも当てはまらない。
 - **immutable な OIDC subject:** このリポジトリの OIDC の `sub` には、オーナーとリポジトリの ID が入る。リポジトリの名前を変えたり、削除して同じ名前で作り直したりしても一致しない。テンプレートのパラメータ `GitHubSubjectPrefix` には、ワイルドカードを使えない。
-- **environment のジョブだけ:** `sub` が `:environment:` で終わるものだけを信頼するので、environment を指定していないジョブ（たとえば PR の CI）はロールを引き受けられない。
-- **スタックにロールが付く:** `deploymentRole` を指定するとスタックに CloudFormation 用のロールが紐づき、手元からのデプロイや削除も、このロールで行われる。
+- **1つの environment のジョブだけ:** `sub` を `...:environment:dev` と完全一致で比べる。environment を指定していないジョブ（PR の CI など）や、ほかの environment（Copilot coding agent が使う `copilot` など）のジョブは、ロールを引き受けられない。
+- **environment は main ブランチに限る:** write 権限があれば、どのブランチのワークフローからでも `environment: dev` を指定できる。GitHub 側で `dev` environment のデプロイ対象を main ブランチに限り、レビューを通ったコードだけがデプロイできるようにする（README の初回の準備）。
+- **ステージごとのロール:** GitHub Actions のロールが触れるのは、パラメータ `GitHubEnvironment` のステージだけ。別のステージ（prod など）を GitHub Actions からデプロイするときは、そのステージ用にロールを分ける（今のテンプレートはロールの名前が固定なので、名前にステージを入れる変更が要る）。
+- **スタックにロールが付く:** `deploymentRole` を指定するとスタックに CloudFormation 用のロールが紐づき、手元からのデプロイや削除も、このロールで行われる。そのため `github-deploy-sample-laravel-bref` スタックやロールを先に消すと、アプリのスタックは更新も削除もできなくなる。消すときはアプリのスタックを先に削除する。
+
+#### 残っているリスク
+
+このアカウントには今、このアプリ以外の VPC、HTTP API、S3 Files がないので、次の点は潜在的なリスクとして残している。ほかのワークロードと同じアカウント・リージョンに置くときは、対策を検討する。
+
+| リスク | 内容 | 対策の候補 |
+|---|---|---|
+| 削除を防ぐ仕組みではない | GitHub Actions のロールに `DeleteStack` はないが、テンプレートを更新すればリソースを消せる。DB バケット（`Retain`）の中身も、boundary の範囲（`s3:*`）で消せる | 重要なステージでは environment の承認を必須にする、バケットのバックアップ |
+| API Gateway と S3 Files を名前で絞れていない | 同じリージョンのほかの HTTP API のルートや統合、ほかの S3 Files のファイルシステムも操作できる | リソースタグ（`aws:ResourceTag`）での条件。HTTP API の子リソースや S3 Files でタグ条件が効くかの確認が要る |
+| 作れるロールの信頼先を絞れていない | IAM には信頼ポリシーの中身で絞る条件キーがないので、boundary の範囲を外部のアカウントから使えるロールも作れる | Organizations の SCP で、`sample-laravel-bref-*` ロールの信頼先をサービスに限る |
+| バケットを公開できる | `s3:PutBucketPolicy` と `s3:PutBucketPublicAccessBlock` を許可しているので、テンプレートで DB バケットを公開できる | アカウントレベルの S3 Block Public Access を有効にする |
 
 ## 5. データ（S3 上の SQLite）
 
