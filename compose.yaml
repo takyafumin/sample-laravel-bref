@@ -1,4 +1,4 @@
-# Local verification of the Bref runtime (see README.md).
+# Local verification of the Bref runtime (see docs/local-development.md).
 #
 # - web / artisan run the same Bref Lambda runtime image used on AWS. Without
 #   AWS_LAMBDA_RUNTIME_API set, the image starts the Lambda Runtime Interface

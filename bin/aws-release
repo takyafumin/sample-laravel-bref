@@ -2,7 +2,7 @@
 # Deploy a stage and run its pending migrations (used by .github/workflows/deploy.yml).
 # - No stack yet: deploy, then migrate.
 # - The repository has migrations that the deployed database has not run:
-#   deploy in maintenance mode, migrate, then deploy again (see README).
+#   deploy in maintenance mode, migrate, then deploy again (docs/aws-deploy.md).
 # - Otherwise: deploy only.
 # If migrating fails, the stage stays in maintenance mode.
 # Usage: bin/aws-release [stage]   (default: dev)
