@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Roles for deploying sample-laravel-bref from GitHub Actions (OIDC, no long-lived keys).
-  Deploy once per AWS account with bin/aws-bootstrap-github-deploy (see README).
+  Deploy once per AWS account with bin/aws-bootstrap-github-deploy (docs/github-actions-deploy.md).
 
 # Three layers, so that the GitHub role cannot escalate its own privileges:
 #   1. GitHubDeployRole   - assumed by GitHub Actions through OIDC. Can only drive
@@ -314,7 +314,7 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
                 # Only jobs that run in this environment of this repository.
-                # Restrict the environment to the main branch in GitHub (README).
+                # Restrict the environment to the main branch in GitHub (docs/github-actions-deploy.md).
                 token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:environment:${GitHubEnvironment}
       Policies:
         - PolicyName: deploy

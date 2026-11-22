@@ -4,7 +4,7 @@ Laravel を Bref で AWS Lambda にデプロイし、データベースには S3
 検証の経緯は [#2](https://github.com/takyafumin/sample-laravel-bref/issues/2) を参照。
 
 - 定義: [serverless.yml](../serverless.yml)（Serverless Framework / osls + Bref）
-- 手順: [README.md](../README.md) の「AWS デプロイ」
+- 手元からのデプロイ: [aws-deploy.md](aws-deploy.md)
 - GitHub Actions からのデプロイ: [github-actions-deploy.md](github-actions-deploy.md)
 
 ## 1. 構成図
@@ -83,7 +83,7 @@ CloudFormation の論理 ID は、serverless.yml の `resources` に書いたも
 - **自分自身は変更できない:** 3つのロール・ポリシーとこのスタックの名前は、どのロールが管理できる `sample-laravel-bref-*` にも当てはまらない。
 - **immutable な OIDC subject:** このリポジトリの OIDC の `sub` には、オーナーとリポジトリの ID が入る。リポジトリの名前を変えたり、削除して同じ名前で作り直したりしても一致しない。テンプレートのパラメータ `GitHubSubjectPrefix` には、ワイルドカードを使えない。
 - **1つの environment のジョブだけ:** `sub` を `...:environment:dev` と完全一致で比べる。environment を指定していないジョブ（PR の CI など）や、ほかの environment（Copilot coding agent が使う `copilot` など）のジョブは、ロールを引き受けられない。
-- **environment は main ブランチに限る:** write 権限があれば、どのブランチのワークフローからでも `environment: dev` を指定できる。GitHub 側で `dev` environment のデプロイ対象を main ブランチに限り、レビューを通ったコードだけがデプロイできるようにする（README の初回の準備）。
+- **environment は main ブランチに限る:** write 権限があれば、どのブランチのワークフローからでも `environment: dev` を指定できる。GitHub 側で `dev` environment のデプロイ対象を main ブランチに限り、レビューを通ったコードだけがデプロイできるようにする（[github-actions-deploy.md の「初回の準備」](github-actions-deploy.md#4-初回の準備)）。
 - **ステージごとのロール:** GitHub Actions のロールが触れるのは、パラメータ `GitHubEnvironment` のステージだけ。別のステージ（prod など）を GitHub Actions からデプロイするときは、そのステージ用にロールを分ける（今のテンプレートはロールの名前が固定なので、名前にステージを入れる変更が要る）。
 - **スタックにロールが付く:** `deploymentRole` を指定するとスタックに CloudFormation 用のロールが紐づき、手元からのデプロイや削除も、このロールで行われる。そのため `github-deploy-sample-laravel-bref` スタックやロールを先に消すと、アプリのスタックは更新も削除もできなくなる。消すときはアプリのスタックを先に削除する。
 
@@ -109,12 +109,17 @@ CloudFormation の論理 ID は、serverless.yml の `resources` に書いたも
 | S3 への反映 | 書き込みが60秒止まってから書き出される |
 | 古いバージョン | 書き込みのたびに新しいオブジェクトのバージョンができるので、ライフサイクルルールで1日後に削除する |
 
+#2 の検証では、次のことも確かめた。
+
+- **S3 上のコピーも有効な DB:** S3 からダウンロードした `database.sqlite` を sqlite3 で開くと、`integrity_check` は `ok` で、journal モードは `delete` だった。
+- **コールドスタート後もデータは残る:** 再デプロイで実行環境を作り直したあとも、メモはそのまま残っていた。
+
 ### 書き込みの競合を避ける方針
 
 SQLite は、ネットワークファイルシステム上で複数のプロセスが同時に書き込むことに向いていない。そこで次の方針を取る。
 
 - **同時実行数を 1 にする:** web 関数と artisan 関数は、どちらも `reservedConcurrency: 1`。
-- **マイグレーションはメンテナンスモード中に流す:** 2つの関数は同時に動けるので、マイグレーションなどの書き込みは、Bref の `MAINTENANCE_MODE` を有効にしてデプロイしてから流す（README の手順を参照）。
+- **マイグレーションはメンテナンスモード中に流す:** 2つの関数は同時に動けるので、マイグレーションなどの書き込みは、Bref の `MAINTENANCE_MODE` を有効にしてデプロイしてから流す（[aws-deploy.md](aws-deploy.md#2-デプロイする)、`bin/aws-release`）。
 - **web 関数は1件ずつ処理する:** 同時実行数が 1 なので、同時に来たリクエストはスロットリングされる（429/503）。高いスループットが要る用途には向かない。
 
 ## 6. 設定値（Lambda の環境変数）
@@ -148,8 +153,8 @@ SQLite は、ネットワークファイルシステム上で複数のプロセ�
 ## 8. 制約と既知の問題
 
 - **APP_KEY が平文で残る:** デプロイ時に解決するので、CloudFormation テンプレートと Lambda の環境変数に平文で入る。
-- **作成直後はマウントがタイムアウトすることがある:** デプロイ直後の最初の呼び出しで `S3FilesMountTimeoutException` になることがある。再試行すれば成功する。
-- **新しいファイルが別の関数から見えるまで遅れる:** ある関数が新しく作ったファイルが、別の関数（別の NFS クライアント）から最大1分ほど見えないことがある。既存ファイルの読み書きは即時に反映される。
+- **作成直後はマウントがタイムアウトすることがある:** デプロイ直後の最初の呼び出しで `S3FilesMountTimeoutException` になることがある。少し待って再試行すれば成功する（AWS のドキュメントにも、時間を置いて再試行するよう書かれている）。
+- **新しいファイルが別の関数から見えるまで遅れる:** ある関数が新しく作ったファイルが、別の関数（別の NFS クライアント）から最大1分ほど見えないことがある（artisan 関数が作った直後の `database.sqlite` が、web 関数からは1分ほど見えなかった）。NFS クライアントがディレクトリの情報をキャッシュするためと考えられる。既存ファイルの読み書きは即時に反映される。
 - **S3 への反映は最大約1分遅れる:** S3 上のコピーは最新とは限らない。S3 側を直接書き換えると、ファイルシステム側の変更と競合することがある（競合したファイルは lost+found に移される）。
 - **削除に時間がかかる:** VPC 内の Lambda のネットワークインターフェースは、解放に数十分かかることがある。
 
@@ -161,9 +166,9 @@ SQLite は、ネットワークファイルシステム上で複数のプロセ�
 | デプロイ用のロールを作る（初回、AWS アカウントごと） | `bin/aws-bootstrap-github-deploy` |
 | デプロイ（GitHub Actions） | Actions → Deploy → Run workflow |
 | デプロイとマイグレーション（手元） | `bin/aws-release dev` |
-| デプロイ | `bin/deploy dev` |
+| デプロイだけ（手元） | `bin/deploy dev` |
 | 初回のマイグレーション | `bin/serverless bref:cli --stage dev --args="migrate --force"` |
 | 2回目以降のマイグレーション | `bin/deploy dev --param="maintenance=1"` → マイグレーション → `bin/deploy dev` |
 | テンプレートの検証 | `bin/cfn-lint dev` |
-| ログを見る | `aws logs tail /aws/lambda/sample-laravel-bref-dev-web --follow --profile takyafumin` |
+| ログを見る | `aws logs tail /aws/lambda/sample-laravel-bref-dev-web --follow --profile takyafumin --region ap-northeast-1` |
 | 後片付け | `bin/aws-remove dev` |
