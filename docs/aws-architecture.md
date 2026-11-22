@@ -170,5 +170,5 @@ SQLite は、ネットワークファイルシステム上で複数のプロセ�
 | 初回のマイグレーション | `bin/serverless bref:cli --stage dev --args="migrate --force"` |
 | 2回目以降のマイグレーション | `bin/deploy dev --param="maintenance=1"` → マイグレーション → `bin/deploy dev` |
 | テンプレートの検証 | `bin/cfn-lint dev` |
-| ログを見る | `aws logs tail /aws/lambda/sample-laravel-bref-dev-web --follow --profile takyafumin` |
+| ログを見る | `aws logs tail /aws/lambda/sample-laravel-bref-dev-web --follow --profile takyafumin --region ap-northeast-1` |
 | 後片付け | `bin/aws-remove dev` |

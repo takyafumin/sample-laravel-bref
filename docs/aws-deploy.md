@@ -15,6 +15,11 @@
 | jq | `bin/serverless`、`bin/aws-release`、`bin/aws-remove` |
 | gh | `bin/aws-bootstrap-github-deploy`（リポジトリの OIDC の設定を読む） |
 
+あわせて、リポジトリで `composer install`、`cp .env.example .env`、`php artisan key:generate` を済ませておく（[README の「ローカルで動かす」](../README.md#ローカルで動かす)）。
+
+- `bin/serverless` は Serverless Framework を docker compose で動かすので、compose.yaml が `.env` の APP_KEY を必要とする。ない場合、`bin/serverless` を使うデプロイ・削除・検証のスクリプトはすべて失敗する（デプロイ先の APP_KEY には SSM のものを使う）
+- `bin/aws-put-app-key` は `php artisan key:generate --show` で値を作るので、vendor/ が要る
+
 ### 1.2 AWS にログインする
 
 AWS プロファイルは既定で `takyafumin`（SSO）。別のプロファイルを使うときは、環境変数 `AWS_PROFILE` で上書きする。
@@ -99,7 +104,7 @@ bin/e2e https://xxxxxxxxxx.execute-api.ap-northeast-1.amazonaws.com
 ログを見る:
 
 ```bash
-aws logs tail /aws/lambda/sample-laravel-bref-dev-web --follow --profile takyafumin
+aws logs tail /aws/lambda/sample-laravel-bref-dev-web --follow --profile takyafumin --region ap-northeast-1
 ```
 
 ## 3. テンプレートを検証する

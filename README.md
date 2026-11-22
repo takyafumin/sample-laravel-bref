@@ -12,7 +12,7 @@ Laravel を [Bref](https://bref.sh/) で AWS Lambda にデプロイする構成�
 
 | 用途 | ツール |
 |---|---|
-| ローカルで動かす・テストする | Docker、PHP 8.5、Composer、jq |
+| ローカルで動かす・テストする | Docker、PHP 8.3 以上（CI と Lambda のランタイムは 8.5）、Composer、jq、curl |
 | AWS にデプロイする | 上記に加えて AWS CLI v2、gh（初回の準備だけ） |
 
 Node.js はホストに要らない（Serverless Framework と Playwright はコンテナで動かす）。
@@ -85,12 +85,14 @@ http://localhost:8000/ を開く。止めるときは `docker compose down`（�
 | デプロイだけ | `bin/deploy dev` |
 | artisan コマンドを実行する | `bin/serverless bref:cli --stage dev --args="migrate:status"` |
 | テンプレートを検証する | `bin/cfn-lint dev` |
-| ログを見る | `aws logs tail /aws/lambda/sample-laravel-bref-dev-web --follow --profile takyafumin` |
+| ログを見る | `aws logs tail /aws/lambda/sample-laravel-bref-dev-web --follow --profile takyafumin --region ap-northeast-1` |
 | 削除する | `bin/aws-remove dev` |
 
 AWS プロファイルは既定で `takyafumin`（SSO）。別のプロファイルを使うときは `AWS_PROFILE` で上書きする。
 
 ## AWS にデプロイする
+
+先に「[ローカルで動かす](#ローカルで動かす)」の初回の準備（`composer install`、`.env`、`php artisan key:generate`）を済ませておく。デプロイのスクリプトも、Serverless Framework を docker compose で動かすので `.env` の APP_KEY が要る（デプロイ先の APP_KEY は SSM のものを使う）。
 
 ### 初回の準備（AWS アカウントごとに1回）
 
