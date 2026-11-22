@@ -23,7 +23,7 @@ php artisan test
 
 ### 2.1 実行する
 
-ローカルのスタックに向けてテストする。`bin/e2e` が、スタックの起動（`docker compose up -d`）とマイグレーションも行う。
+ローカルのスタックに向けてテストする。`bin/e2e` が、スタックの起動（`docker compose up -d web artisan gateway`）とマイグレーションも行う。事前に [README の「ローカルで動かす」](../README.md#ローカルで動かす) の初回の準備（`composer install`、`.env` の APP_KEY、Linux では `.docker-data/db` の権限）を済ませておく。
 
 ```bash
 bin/e2e
@@ -69,7 +69,7 @@ bin/e2e --ui
 ### 2.3 注意点
 
 - **失敗したときのトレース:** `e2e/test-results/` に残る（CI では artifact としてアップロードする）。`npx playwright show-trace` や https://trace.playwright.dev/ で開ける
-- **デプロイした環境に向けたとき:** スロットリングやコールドスタートに備えて、リトライを2回にし、expect のタイムアウトを15秒に延ばす
+- **リトライ:** デプロイした環境（https）に向けたときは、スロットリングやコールドスタートに備えて2回リトライし、expect のタイムアウトを15秒に延ばす。CI でローカルのスタックに向けたときは1回リトライする。手元でローカルのスタックに向けたときはリトライしない
 - **1ワーカーで順番に実行する:** web 関数の `reservedConcurrency: 1` と、ローカルの RIE が同時に1件しか処理できないことに合わせている
 - **共有 DB への配慮:** AWS の DB は共有なので、テストで作るメモは一意な本文にして、同じテストの中で削除する。テストが途中で失敗すると、`e2e ` で始まるメモが残ることがある
 - **CI:** `e2e` ジョブが arm64 のランナー（`ubuntu-24.04-arm`）でローカルのスタックを起動して実行する。デプロイした環境に向けた E2E は、GitHub Actions のデプロイのワークフローで実行する（[github-actions-deploy.md](github-actions-deploy.md)）

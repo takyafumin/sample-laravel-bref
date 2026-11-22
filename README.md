@@ -12,10 +12,10 @@ Laravel を [Bref](https://bref.sh/) で AWS Lambda にデプロイする構成�
 
 | 用途 | ツール |
 |---|---|
-| ローカルで動かす・テストする | Docker、PHP 8.3 以上（CI と Lambda のランタイムは 8.5）、Composer、jq、curl |
+| ローカルで動かす・テストする | Docker、PHP 8.4.1 以上（8.5 推奨。CI と Lambda のランタイムは 8.5）、Composer、jq、curl |
 | AWS にデプロイする | 上記に加えて AWS CLI v2、gh（初回の準備だけ） |
 
-Node.js はホストに要らない（Serverless Framework と Playwright はコンテナで動かす）。
+Node.js はホストに要らない（Serverless Framework と Playwright はコンテナで動かす）。ローカルの Lambda のイメージは arm64（`bref/arm-php-85`）なので、x86_64 の Linux では arm64 のエミュレーション（binfmt / QEMU）が要る（Apple シリコンの Mac と Docker Desktop ならそのまま動く）。
 
 ## ローカルで動かす
 
@@ -48,6 +48,8 @@ docker compose up -d
 ```bash
 bin/local-artisan "migrate --force"
 ```
+
+起動直後は artisan 関数がまだ受け付けておらず、失敗することがある。その場合は数秒待って再実行する。
 
 http://localhost:8000/ を開く。止めるときは `docker compose down`（データは `.docker-data/db/` に残る）。
 
@@ -108,7 +110,7 @@ bin/aws-bootstrap-github-deploy
 bin/aws-put-app-key dev
 ```
 
-1つ目はデプロイ用の IAM ロールを作り、2つ目は APP_KEY を SSM Parameter Store に作る。GitHub Actions からデプロイするときは、GitHub の environment `dev` と変数 `AWS_DEPLOY_ROLE_ARN` も設定する（[docs/github-actions-deploy.md の「初回の準備」](docs/github-actions-deploy.md#4-初回の準備)）。
+1つ目はデプロイ用の IAM ロール（と、なければ GitHub の OIDC プロバイダー）を作るので、管理者権限のあるプロファイルで実行する。リポジトリの OIDC の設定を gh で読むので、`gh auth login` も済ませておく。2つ目は APP_KEY を SSM Parameter Store に作る。GitHub Actions からデプロイするときは、GitHub の environment `dev` と変数 `AWS_DEPLOY_ROLE_ARN` も設定する（[docs/github-actions-deploy.md の「初回の準備」](docs/github-actions-deploy.md#4-初回の準備)）。
 
 ### GitHub Actions からデプロイする
 

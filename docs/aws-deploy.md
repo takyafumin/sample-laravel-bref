@@ -32,7 +32,7 @@ aws sso login --profile takyafumin
 
 ### 1.3 初回だけ行うこと
 
-デプロイ用のロールを作る（AWS アカウントごとに1回）。serverless.yml は、CloudFormation に渡すロールと permissions boundary の ARN をこのスタックから読むので、手元からデプロイするときにも必要。詳細は [github-actions-deploy.md の「初回の準備」](github-actions-deploy.md#4-初回の準備)。
+デプロイ用のロールを作る（AWS アカウントごとに1回）。IAM ロールと、なければ GitHub の OIDC プロバイダーを作るので、管理者権限のあるプロファイルで実行する。リポジトリの OIDC の設定（subject の接頭辞）を gh で読むので、`gh auth login` も済ませておく（gh で読めないと、テンプレートの既定値で作られる）。serverless.yml は、CloudFormation に渡すロールと permissions boundary の ARN をこのスタックから読むので、手元からデプロイするときにも必要。詳細は [github-actions-deploy.md の「初回の準備」](github-actions-deploy.md#4-初回の準備)。
 
 ```bash
 bin/aws-bootstrap-github-deploy
